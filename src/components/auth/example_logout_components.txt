@@ -1,0 +1,9 @@
+const clearAuth = useGlobalStore((state) => state.clearAuth);
+
+const handleLogout = async () => {
+  await fetch(`${basePath}/api/auth/logout`, {
+    method: "POST",
+    credentials: "include",
+  });
+  clearAuth(); // the page switches back to <Login />
+};

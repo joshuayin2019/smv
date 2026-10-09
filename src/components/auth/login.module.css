@@ -1,0 +1,46 @@
+.background {
+  height: 100vh;
+  width: 100%;
+}
+
+.paper {
+  background-color: transparent;
+  border-color: aqua;
+}
+
+
+/* Input */
+.field {
+  color: aliceblue;
+  font-style: italic;
+}
+
+.field input{
+  background-color: transparent;
+  border-color: aqua;
+  color: white; /* Optional */
+  font-style: normal;
+}
+
+
+.title {
+  font-family: Outfit, var(--mantine-font-family);
+  font-weight: 700;
+  color: aliceblue;
+  font-size: 32px;
+}
+
+.subtitle {
+  color: var(--mantine-color-dimmed);
+  font-size: var(--mantine-font-size-sm);
+  text-align: center;
+  margin-top: 5px;
+}
+
+.copyright {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  color: white;
+  font-size: 8px;
+}
