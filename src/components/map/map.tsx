@@ -29,9 +29,15 @@ export default function Map({ active = true }: { active?: boolean }) {
   }, [active]);
 
   // Resize when container size changes (navbar toggle, window resize)
+  // 3. Resize when the container size changes (skips 0x0 while hidden)
   useEffect(() => {
     if (!containerRef.current) return;
-    const ro = new ResizeObserver(() => mapRef.current?.resize());
+    const ro = new ResizeObserver(() => {
+      const el = containerRef.current;
+      if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+        mapRef.current?.resize();
+      }
+    });
     ro.observe(containerRef.current);
     return () => ro.disconnect();
   }, []);

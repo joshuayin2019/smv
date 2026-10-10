@@ -203,7 +203,7 @@ function NavbarFooter({
               </Avatar>
 
               <div style={{ flex: 1, minWidth: 0 }}>
-                <Text size="sm" fw={600} c={NAVY_TEXT} truncate>
+                <Text size="xs" fw={600} c={NAVY_TEXT} truncate>
                   {USER.name}
                 </Text>
                 <Text size="xs" c="dimmed" truncate>

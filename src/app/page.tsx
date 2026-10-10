@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Login from "@/components/auth/login";
-import Dashboard from "@/components/dashboard/dashboard";
+import LayoutParent from "@/components/_layout/_layout";
 import { useGlobalStore } from "@/stores/global_stores";
 import { basePath } from "@/lib/config";
 
@@ -30,6 +30,6 @@ export default function Home() {
 
   if (checking) return null; // or a loading spinner
 
-  return auth ? <Dashboard /> : <Login />;
+  return auth ? <LayoutParent /> : <Login />;
 
 }

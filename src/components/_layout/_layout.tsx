@@ -11,13 +11,11 @@ const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 // Pages where the map is visible
 const HIDE_MAP_PAGES = [DEFAULT_PAGE, 'User Management'];
 
-export default function Dashboard() {
+export default function LayoutParent() {
   const [mobileOpened, { toggle: toggleMobile }] = useDisclosure();
   const [desktopOpened, { toggle: toggleDesktop }] = useDisclosure(true);
   const activePage = useGlobalStore((s) => s.activePage);
   const showMap = !HIDE_MAP_PAGES.includes(activePage);
-
-
 
   return (
     <AppShell
@@ -49,10 +47,7 @@ export default function Dashboard() {
           <Box
             pos="absolute"
             inset={0}
-            style={{
-              visibility: showMap ? 'visible' : 'hidden',
-              pointerEvents: showMap ? 'auto' : 'none',
-            }}
+            style={{ display: showMap ? 'block' : 'none' }}
           >
             <Map active={showMap} />
           </Box>
