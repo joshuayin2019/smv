@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { verifySession } from "@/lib/auth-service";
+import { verifySession } from "@/lib/auth/auth-service";
+
 
 export async function GET() {
   const token = (await cookies()).get("token")?.value;

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { revokeSession } from "@/lib/auth-service";
+import { revokeSession } from "@/lib/auth/auth-service";
 
 export async function POST() {
   const cookieStore = await cookies();

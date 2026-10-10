@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { login } from "@/lib/auth-service";
+import { login } from "@/lib/auth/auth-service";
 
 export async function POST(request: Request) {
   const { data } = await request.json();

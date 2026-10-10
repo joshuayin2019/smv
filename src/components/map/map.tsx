@@ -1,49 +1,40 @@
-"use client";
-
-import { useEffect, useRef } from "react";
+// components/map/map.tsx
+import { useEffect, useRef } from 'react';
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
 
-export default function MapView() {
-  const mapContainer = useRef<HTMLDivElement | null>(null);
+export default function Map({ active = true }: { active?: boolean }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
 
   useEffect(() => {
-    const el = mapContainer.current;
-    if (!el) return;
-
-    const map = new maplibregl.Map({
-      container: el,
+    if (!containerRef.current || mapRef.current) return;
+    mapRef.current = new maplibregl.Map({
+      container: containerRef.current,
       style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-      pitch: 60,
-      center: [121.06243573632347, 14.586252639496266],
-      zoom: 10,
+      center: [121, 14.6],
+      zoom: 5,
     });
-
-    map.addControl(new maplibregl.NavigationControl(), "bottom-right");
-
-    // Resize and repaint in the same frame so the cleared canvas is never shown
-    const ro = new ResizeObserver(() => {
-      map.resize();
-      map.redraw();
-    });
-    ro.observe(el);
-
     return () => {
-      ro.disconnect();
-      map.remove();
+      mapRef.current?.remove();
+      mapRef.current = null;
     };
   }, []);
 
-  return (
-    <div
-      ref={mapContainer}
-      style={{
-        width: "100%",
-        height: "calc(100vh - 50px)", // 50 = header height
-        background: "#e9edf0",
-      }}
-    />
-  );
+  // Resize when shown again
+  useEffect(() => {
+    if (active) requestAnimationFrame(() => mapRef.current?.resize());
+  }, [active]);
+
+  // Resize when container size changes (navbar toggle, window resize)
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const ro = new ResizeObserver(() => mapRef.current?.resize());
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
 }

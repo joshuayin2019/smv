@@ -23,6 +23,8 @@ import {
 
 
 import { useGlobalStore } from '@/stores/global_stores';
+import { basePath } from "@/lib/config";
+
 
 
 const NAVY = '#0a1f6b'; // closed section header
@@ -236,11 +238,15 @@ export default function LayoutNavbar() {
   const [openSection, setOpenSection] = useState<string | null>(SECTIONS[0].label);
   const active = useGlobalStore((s) => s.activePage);
   const setActive = useGlobalStore((s) => s.setActivePage);
+  const { clearAuth } = useGlobalStore();
 
-  const handleLogout = () => {
-    // e.g. call your logout route handler, clear the token, then redirect:
-    // await fetch('/api/users/logout', { method: 'POST' });
-    // router.push('/login');   // useRouter from 'next/navigation'
+
+  const handleLogout = async () => {
+    await fetch(`${basePath}/api/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
+    clearAuth(); // the page switches back to <Login />
   };
 
   return (
