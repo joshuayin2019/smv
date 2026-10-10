@@ -1,3 +1,4 @@
+import dynamic from "next/dynamic";
 import { AppShell, Burger, Group, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 
@@ -6,6 +7,7 @@ import { useDisclosure } from '@mantine/hooks';
 import LayoutHeader from './layout_header';
 import LayoutNavbar from './layout_navbar';
 
+const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
 export default function Dashboard() {
   const [mobileOpened, { toggle: toggleMobile }] = useDisclosure();
@@ -14,13 +16,14 @@ export default function Dashboard() {
   return (
 
     <AppShell
-      padding="md"
       header={{ height: 50 }}
       navbar={{
         width: 250,
         breakpoint: 'sm',
         collapsed: { mobile: !mobileOpened, desktop: !desktopOpened },
       }}
+      transitionDuration={200} //300
+      transitionTimingFunction="ease"
     >
       <AppShell.Header>
         <LayoutHeader
@@ -36,10 +39,7 @@ export default function Dashboard() {
       </AppShell.Navbar>
 
       <AppShell.Main>
-        
-        <Text>This is the main section, your app content here.</Text>
-        <Text>The navbar is collapsible both on mobile and desktop. Nice!</Text>
-        <Text>Mobile and desktop opened state can be managed separately.</Text>
+        <Map />
       </AppShell.Main>
     </AppShell>
 
