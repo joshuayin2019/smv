@@ -21,13 +21,17 @@ import { IconTrash } from "@tabler/icons-react";
 
 /* ---------- static sample data (replace with your API / DB later) ---------- */
 
-const MODULES = ["SMV", "Zonal Value", "POI", "PSA", "Farm Activity"];
+const MODULES = ["SMV", "POI", "PSA"];
 
 const SCOPE_LEVELS = [
   { value: "region", label: "Region" },
   { value: "province", label: "Province" },
   { value: "municipality", label: "Municipality" },
 ];
+
+
+
+
 
 const REGIONS = [
   { value: "NCR", label: "NCR" },
@@ -359,15 +363,4 @@ export default function AddUser({ isOpenAddModal, setIsOpenAddModal }: Props) {
   );
 }
 
-/* ---------- usage ----------
-import { useDisclosure } from "@mantine/hooks";
 
-const [opened, { open, close }] = useDisclosure(false);
-
-<Button onClick={open}>Add User</Button>
-<AddUserStepperModal
-  opened={opened}
-  onClose={close}
-  onSubmit={(user, scopes, modules) => console.log(user, scopes, modules)}
-/>
-*/

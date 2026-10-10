@@ -24,8 +24,7 @@ import {
 
 import { useGlobalStore } from '@/stores/global_stores';
 import { basePath } from "@/lib/config";
-
-
+import useEffect from 'react';
 
 const NAVY = '#0a1f6b'; // closed section header
 const NAVY_DEEP = '#000e47'; // open header, same as AppShell header
@@ -236,9 +235,7 @@ function NavbarFooter({
 
 export default function LayoutNavbar() {
   const [openSection, setOpenSection] = useState<string | null>(SECTIONS[0].label);
-  const active = useGlobalStore((s) => s.activePage);
-  const setActive = useGlobalStore((s) => s.setActivePage);
-  const { clearAuth } = useGlobalStore();
+  const { clearAuth, setActivePage, activePage } = useGlobalStore();
 
 
   const handleLogout = async () => {
@@ -258,11 +255,11 @@ export default function LayoutNavbar() {
             const expandable = section.items.length > 0;
 
             if (section.link) {
-              const isActive = active === section.label;
+              const isActive = activePage === section.label;
               return (
                 <UnstyledButton
                   key={section.label}
-                  onClick={() => setActive(section.label)}
+                  onClick={() => setActivePage(section.label)}
                   w="100%"
                   px="md"
                   py={10}
@@ -315,8 +312,8 @@ export default function LayoutNavbar() {
                           <NavRow
                             key={item.label}
                             item={item}
-                            active={active}
-                            onSelect={setActive}
+                            active={activePage}
+                            onSelect={setActivePage}
                           />
                         ))}
                       </Stack>
@@ -333,7 +330,7 @@ export default function LayoutNavbar() {
         </Stack>
       </ScrollArea>
 
-      <NavbarFooter onProfile={() => setActive('Profile')} onLogout={handleLogout} />
+      <NavbarFooter onProfile={() => setActivePage('Profile')} onLogout={handleLogout} />
     </Box>
   );
 }

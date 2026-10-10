@@ -11,6 +11,7 @@ export default function Home() {
   const { setAuth ,auth } = useGlobalStore();
   const [checking, setChecking] = useState(true);
 
+  //Authententicaion check on page load
   useEffect(() => {
     const checkAuth = async () => {
       try {
