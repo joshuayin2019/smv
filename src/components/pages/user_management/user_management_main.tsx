@@ -1,16 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
   ActionIcon,
-  Anchor,
   Avatar,
   Badge,
   Box,
-  Breadcrumbs,
   Button,
   Center,
   CloseButton,
   Group,
+  Loader,
   Menu,
   MultiSelect,
   Pagination,
@@ -34,24 +33,25 @@ import {
 } from '@tabler/icons-react';
 import {
   EMPTY_FILTERS,
-  MUNICIPALITIES,
-  PROVINCES,
-  REGIONS,
-  USERS,
+  SCOPE_TYPES,
   filterUsers,
+  normalizeUser,
   searchUsers,
+  type ApiUser,
   type Scope,
   type User,
   type UserFilters,
   type UserStatus,
-} from './users.data';
+} from './users.utils';
+import { basePath } from '@/lib/config';
+import { useGlobalStore } from '@/stores/global_stores';
+import AddUser from './add_user';
 
 // Your global CSS sets overflow-y: hidden, so this page scrolls inside its own container.
 // Set this to the height of your top header (the "SMV Web Application" bar) so the container
 // fills the rest of the screen. Adjust it if your layout adds extra padding around the page.
 const HEADER_HEIGHT = 60;
-const PAGE_SIZE_OPTIONS = ['3','6', '9', '12'];
-const REGION_OPTIONS = REGIONS.map((r) => ({ value: r.code, label: r.name }));
+const PAGE_SIZE_OPTIONS = ['3', '6', '9', '12'];
 
 const STATUS_OPTIONS: { value: UserStatus; label: string }[] = [
   { value: 'active', label: 'Active' },
@@ -69,26 +69,22 @@ const getInitials = (name: string) =>
     .toUpperCase();
 
 // Same user always gets the same color
-const getAvatarColor = (userId: number) => AVATAR_COLORS[userId % AVATAR_COLORS.length];
+const getAvatarColor = (id: number) => AVATAR_COLORS[id % AVATAR_COLORS.length];
 
-// e.g. [{ level: 'municipality', count: 2 }]
-const summarizeScopes = (scopes: Scope[]) => {
-  const counts = new Map<string, number>();
-  scopes.forEach((s) => counts.set(s.scope_level, (counts.get(s.scope_level) ?? 0) + 1));
-  return Array.from(counts, ([level, count]) => ({ level, count }));
-};
-
-const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+// e.g. [{ type: 'poi', count: 2 }, { type: 'psa', count: 1 }]
+const summarizeScopes = (scopes: Scope[]) =>
+  SCOPE_TYPES.map((type) => ({ type, count: scopes.filter((s) => s.type === type).length })).filter(
+    (x) => x.count > 0,
+  );
 
 function UserCard({ user }: { user: User }) {
-  
   const scopeSummary = summarizeScopes(user.scopes);
 
   return (
     <Paper withBorder radius="md" p="md" shadow="xs" style={{ borderColor: '#0a1f6b' }}>
       <Group justify="space-between" wrap="nowrap" align="flex-start">
         <Group wrap="nowrap" gap="md" align="flex-start">
-          <Avatar color={getAvatarColor(user.user_id)} size={52} radius="xl">
+          <Avatar color={getAvatarColor(user.id)} size={52} radius="xl">
             {getInitials(user.full_name)}
           </Avatar>
           <div>
@@ -96,20 +92,18 @@ function UserCard({ user }: { user: User }) {
               {user.full_name}
             </Text>
             <Text c="dimmed" size="xs">
-              @{user.username}
+              username: {user.username}
             </Text>
-            <Text fw={700} size="xs" mt={6}>
-              {user.role}
-            </Text>
+            {user.role && (
+              <Text fw={700} size="xs" mt={6}>
+                {user.role}
+              </Text>
+            )}
           </div>
         </Group>
 
         <Group gap={4} wrap="nowrap">
-          <Badge
-            size="sm"
-            variant="light"
-            color={user.status === 'active' ? 'green' : 'gray'}
-          >
+          <Badge size="sm" variant="light" color={user.status === 'active' ? 'green' : 'gray'}>
             {user.status}
           </Badge>
           <Menu position="bottom-end" withinPortal>
@@ -138,7 +132,7 @@ function UserCard({ user }: { user: User }) {
         </Group>
         <Group gap="xs" wrap="nowrap">
           <IconPhone size={14} stroke={1.5} />
-          <Text size="xs">{user.phone_number}</Text>
+          <Text size="xs">+{user.phone_number}</Text>
         </Group>
         <Group gap="xs" wrap="nowrap" align="flex-start">
           <IconMapPin size={14} stroke={1.5} style={{ marginTop: 2 }} />
@@ -154,9 +148,9 @@ function UserCard({ user }: { user: User }) {
             No scope assigned
           </Text>
         ) : (
-          scopeSummary.map(({ level, count }) => (
-            <Badge key={level} size="sm" variant="outline" color="blue">
-              {capitalize(level)} × {count}
+          scopeSummary.map(({ type, count }) => (
+            <Badge key={type} size="sm" variant="outline" color="blue">
+              {type.toUpperCase()} × {count}
             </Badge>
           ))
         )}
@@ -165,71 +159,54 @@ function UserCard({ user }: { user: User }) {
   );
 }
 
-import AddUser from './add_user';
-
-
 export default function UserManagementMain() {
+  const { auth } = useGlobalStore();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState('6');
+
+  // Data from the API
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [filters, setFilters] = useState<UserFilters>(EMPTY_FILTERS);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 250);
 
-  //Add Users
+  // Add Users
   const [isOpenAddModal, setIsOpenAddModal] = useState(false);
 
-  // Cascading options: provinces follow the selected regions,
-  // municipalities follow the selected provinces (or regions when no province is picked).
-  const provinceOptions = useMemo(
-    () =>
-      PROVINCES.filter((p) => filters.reg_code.length === 0 || filters.reg_code.includes(p.reg_code)).map(
-        (p) => ({ value: p.code, label: p.name }),
-      ),
-    [filters.reg_code],
-  );
+  // ---------- Load data ----------
+  useEffect(() => {
+    if (!auth) return;
+    const controller = new AbortController();
 
-  const municipalityOptions = useMemo(() => {
-    const provinceRegion = new Map(PROVINCES.map((p) => [p.code, p.reg_code]));
-    return MUNICIPALITIES.filter((m) => {
-      if (filters.pro_code.length > 0) return filters.pro_code.includes(m.pro_code);
-      if (filters.reg_code.length > 0) return filters.reg_code.includes(provinceRegion.get(m.pro_code) ?? '');
-      return true;
-    }).map((m) => ({ value: m.code, label: m.name }));
-  }, [filters.reg_code, filters.pro_code]);
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`${basePath}/api/pages/users_management`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
-  const hasActiveFilters =
-    filters.reg_code.length > 0 ||
-    filters.pro_code.length > 0 ||
-    filters.mun_code.length > 0 ||
-    filters.status.length > 0 ||
-    search.trim().length > 0;
+        const json = await response.json();
+        const rows: ApiUser[] = Array.isArray(json) ? json : json.data;
+        setUsers(rows.map(normalizeUser));
+      } catch (e: any) {
+        if (e?.name !== 'AbortError') {
+          console.error('Failed to load users:', e);
+          setError(e?.message ?? 'Failed to load users');
+        }
+      } finally {
+        setLoading(false);
+      }
+    })();
 
-  const handleRegionChange = (reg_code: string[]) => {
-    // Drop selected provinces / municipalities that no longer belong to the chosen regions
-    const validProvinces = PROVINCES.filter((p) => reg_code.length === 0 || reg_code.includes(p.reg_code));
-    const pro_code = filters.pro_code.filter((c) => validProvinces.some((p) => p.code === c));
-    const validProvinceCodes = new Set(validProvinces.map((p) => p.code));
-    const mun_code = filters.mun_code.filter((c) =>
-      MUNICIPALITIES.some((m) => m.code === c && validProvinceCodes.has(m.pro_code)),
-    );
-    setFilters({ ...filters, reg_code, pro_code, mun_code });
-    setPage(1);
-  };
+    return () => controller.abort();
+  }, [auth]);
 
-  const handleProvinceChange = (pro_code: string[]) => {
-    const mun_code =
-      pro_code.length === 0
-        ? filters.mun_code
-        : filters.mun_code.filter((c) => MUNICIPALITIES.some((m) => m.code === c && pro_code.includes(m.pro_code)));
-    setFilters({ ...filters, pro_code, mun_code });
-    setPage(1);
-  };
-
-  const handleMunicipalityChange = (mun_code: string[]) => {
-    setFilters({ ...filters, mun_code });
-    setPage(1);
-  };
+  const hasActiveFilters = filters.status.length > 0 || search.trim().length > 0;
 
   const handleStatusChange = (status: string[]) => {
     setFilters({ ...filters, status: status as UserStatus[] });
@@ -250,8 +227,8 @@ export default function UserManagementMain() {
   const size = Number(pageSize);
 
   const filteredUsers = useMemo(
-    () => searchUsers(filterUsers(USERS, filters), debouncedSearch),
-    [filters, debouncedSearch],
+    () => searchUsers(filterUsers(users, filters), debouncedSearch),
+    [users, filters, debouncedSearch],
   );
 
   const totalPages = Math.max(1, Math.ceil(filteredUsers.length / size));
@@ -270,88 +247,43 @@ export default function UserManagementMain() {
     setPage(1);
   };
 
+  const selectStyles = { input: { borderColor: '#0a1f6b' } };
+
   return (
-    <Box
-      h={`calc(100dvh - ${HEADER_HEIGHT}px)`}
-      style={{ overflowY: 'auto', overflowX: 'hidden' }}
-    >
-    <Stack gap="xs" p="xs">
-      <Group justify="space-between">
-        <Title order={3} fw={500} size="h4" c="#0a1f6b">
-          User Management
-        </Title>
-        <Button variant="outline" size="xs" rightSection={<IconPlus size={16} />} aria-label="Add user" onClick={() => setIsOpenAddModal(true)} style={{ borderColor:'#0a1f6b', color:'#0a1f6b' }}>
-          ADD USER
-        </Button>
-      </Group>
+    <Box h={`calc(100dvh - ${HEADER_HEIGHT}px)`} style={{ overflowY: 'auto', overflowX: 'hidden' }}>
+      <Stack gap="xs" p="xs">
+        <Group justify="space-between">
+          <Title order={3} fw={500} size="h4" c="#0a1f6b">
+            User Management
+          </Title>
+          <Button
+            variant="outline"
+            size="xs"
+            rightSection={<IconPlus size={16} />}
+            aria-label="Add user"
+            onClick={() => setIsOpenAddModal(true)}
+            style={{ borderColor: '#0a1f6b', color: '#0a1f6b' }}
+          >
+            ADD USER
+          </Button>
+        </Group>
 
-      <TextInput
-        placeholder="Search name, email, phone, role, location..."
-        aria-label="Search users"
-        leftSection={<IconSearch size={16} />}
-        rightSection={
-          search ? (
-            <CloseButton size="sm" aria-label="Clear search" onClick={() => handleSearchChange('')} />
-          ) : null
-        }
-        value={search}
-        onChange={(event) => handleSearchChange(event.currentTarget.value)}
-        size="sm"
-        styles={{
-          input: {
-            borderColor:'#0a1f6b'
+        <TextInput
+          placeholder="Search name, email, phone, role, address..."
+          aria-label="Search users"
+          leftSection={<IconSearch size={16} />}
+          rightSection={
+            search ? (
+              <CloseButton size="sm" aria-label="Clear search" onClick={() => handleSearchChange('')} />
+            ) : null
           }
-        }}
+          value={search}
+          onChange={(event) => handleSearchChange(event.currentTarget.value)}
+          size="sm"
+          styles={selectStyles}
+        />
 
-      />
-
-      <Stack gap="xs">
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-          <MultiSelect
-            label="Region"
-            placeholder="All regions"
-            data={REGION_OPTIONS}
-            value={filters.reg_code}
-            onChange={handleRegionChange}
-            size="sm"
-            searchable
-            clearable
-            styles={{
-              input: {
-                borderColor:'#0a1f6b'
-              }
-            }}
-          />
-          <MultiSelect
-            label="Province"
-            placeholder="All provinces"
-            data={provinceOptions}
-            value={filters.pro_code}
-            onChange={handleProvinceChange}
-            size="sm"
-            searchable
-            clearable
-            styles={{
-              input: {
-                borderColor:'#0a1f6b'
-              }
-            }}
-          />
-          <MultiSelect
-            label="Municipality"
-            placeholder="All municipalities"
-            data={municipalityOptions}
-            value={filters.mun_code}
-            onChange={handleMunicipalityChange}
-            searchable
-            clearable
-            size="sm"
-            styles={{
-              input: {
-                borderColor:'#0a1f6b'
-              }
-            }}
-          />
+        <Group align="flex-end" justify="space-between">
           <MultiSelect
             label="Status"
             placeholder="Active and inactive"
@@ -360,65 +292,58 @@ export default function UserManagementMain() {
             onChange={handleStatusChange}
             clearable
             size="sm"
-            styles={{
-              input: {
-                borderColor:'#0a1f6b'
-              }
-            }}
+            w={{ base: '100%', sm: 280 }}
+            styles={selectStyles}
           />
-        </SimpleGrid>
-        {hasActiveFilters && (
-          <Group justify="flex-end">
+          {hasActiveFilters && (
             <Button variant="subtle" size="xs" onClick={resetFilters}>
               Reset filters
             </Button>
-          </Group>
-        )}
-      </Stack>
-
-      {visibleUsers.length === 0 ? (
-        <Center py="xl">
-          <Text c="dimmed">No users match your search or filters.</Text>
-        </Center>
-      ) : (
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-          {visibleUsers.map((user) => (
-            <UserCard key={user.user_id} user={user} />
-          ))}
-        </SimpleGrid>
-      )}
-
-      <Group justify="space-between" mt="sm">
-        <Group gap="xs">
-          <Text size="sm" c="#0a1f6b">
-            Showing {from}–{to} of {filteredUsers.length}
-          </Text>
-          <Select
-            data={PAGE_SIZE_OPTIONS}
-            value={pageSize}
-            onChange={handlePageSizeChange}
-            allowDeselect={false}
-            w={72}
-            size="xs"
-            aria-label="Users per page"
-            styles={{
-              input: {
-                borderColor:'#0a1f6b'
-              }
-            }}
-          />
+          )}
         </Group>
 
-        <Pagination total={totalPages} value={page} onChange={setPage} withEdges radius="md" color="#0a1f6b" />
-      </Group>
-    </Stack>
-    
-    <AddUser 
-      setIsOpenAddModal={setIsOpenAddModal}
-      isOpenAddModal={isOpenAddModal}
-    />
+        {error ? (
+          <Center py="xl">
+            <Text c="red">{error}</Text>
+          </Center>
+        ) : loading ? (
+          <Center py="xl">
+            <Loader size="sm" />
+          </Center>
+        ) : visibleUsers.length === 0 ? (
+          <Center py="xl">
+            <Text c="dimmed">No users match your search or filters.</Text>
+          </Center>
+        ) : (
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+            {visibleUsers.map((user) => (
+              <UserCard key={user.id} user={user} />
+            ))}
+          </SimpleGrid>
+        )}
 
+        <Group justify="space-between" mt="sm">
+          <Group gap="xs">
+            <Text size="sm" c="#0a1f6b">
+              Showing {from}–{to} of {filteredUsers.length}
+            </Text>
+            <Select
+              data={PAGE_SIZE_OPTIONS}
+              value={pageSize}
+              onChange={handlePageSizeChange}
+              allowDeselect={false}
+              w={72}
+              size="xs"
+              aria-label="Users per page"
+              styles={selectStyles}
+            />
+          </Group>
 
+          <Pagination total={totalPages} value={page} onChange={setPage} withEdges radius="md" color="#0a1f6b" />
+        </Group>
+      </Stack>
+
+      <AddUser setIsOpenAddModal={setIsOpenAddModal} isOpenAddModal={isOpenAddModal} />
     </Box>
   );
 }

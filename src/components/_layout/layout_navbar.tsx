@@ -24,7 +24,7 @@ import {
 
 import { useGlobalStore } from '@/stores/global_stores';
 import { basePath } from "@/lib/config";
-import useEffect from 'react';
+
 
 const NAVY = '#0a1f6b'; // closed section header
 const NAVY_DEEP = '#000e47'; // open header, same as AppShell header
