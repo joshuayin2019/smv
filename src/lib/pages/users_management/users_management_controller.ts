@@ -42,7 +42,7 @@ export async function loadUsers(){
                         ELSE NULL
                     END
                 )
-                ) FILTER (WHERE b.smv = true) AS scope_smb
+                ) FILTER (WHERE b.smv = true) AS scope_smv
 
                 FROM data.users a
                 INNER JOIN data.scope b on a.user_id = b.user_id

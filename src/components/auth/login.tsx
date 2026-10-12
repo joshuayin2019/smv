@@ -17,16 +17,16 @@ export default function Login() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false); 
 
-  const form = useForm({
+  const form = useForm<{ username: string; password: string }>({
     initialValues: {
       username: '',
       password: '',
     },
-    validate:{
+    validate: {
       username: (val) => (val.length < 3 ? 'Username should be at least 3 characters' : null),
       password: (val) => (val.length <= 3 ? 'Password should include at least 4 characters' : null),
-    }
-  }); 
+    },
+  });
 
   const handleSubmit = async() => { 
     const validation = form.validate();
@@ -100,7 +100,7 @@ export default function Login() {
                       styles={{
                           input: {
                           backgroundColor: 'transparent',
-                          borderColor: 'aqua',
+                          borderColor: 'aliceblue',
                           color: 'white',
                           fontStyle: 'normal',
                           },

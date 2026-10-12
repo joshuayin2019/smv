@@ -103,7 +103,16 @@ function UserCard({ user }: { user: User }) {
         </Group>
 
         <Group gap={4} wrap="nowrap">
-          <Badge size="sm" variant="light" color={user.status === 'active' ? 'green' : 'gray'}>
+          {/* <Badge size="sm" variant="light" color={user.status === 'active' ? 'green' : 'gray'}>
+            {user.status}
+          </Badge> */}
+          <Badge
+            size="sm"
+            variant="light"
+            color={user.status === 'active' ? 'green' : 'gray'}
+            style={{ flexShrink: 0 }}
+            styles={{ label: { overflow: 'visible', textOverflow: 'clip' } }}
+          >
             {user.status}
           </Badge>
           <Menu position="bottom-end" withinPortal>
@@ -315,7 +324,7 @@ export default function UserManagementMain() {
             <Text c="dimmed">No users match your search or filters.</Text>
           </Center>
         ) : (
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 3, xl:4 }} spacing="md">
             {visibleUsers.map((user) => (
               <UserCard key={user.id} user={user} />
             ))}

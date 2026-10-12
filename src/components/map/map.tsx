@@ -1,7 +1,7 @@
 // components/map/map.tsx
 import { useEffect, useRef } from 'react';
 import * as maplibregl from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
+//import "maplibre-gl/dist/maplibre-gl.css";
 
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
 
@@ -11,35 +11,35 @@ export default function Map({ active = true }: { active?: boolean }) {
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
-    mapRef.current = new maplibregl.Map({
+    const map = new maplibregl.Map({
       container: containerRef.current,
       style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
       center: [121, 14.6],
       zoom: 5,
+      // Disable the built-in resize handler; we do our own below
+      trackResize: false,
     });
+    mapRef.current = map;
+
+    const el = containerRef.current;
+    let raf = 0;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        // Skip while hidden (display:none gives 0x0) to avoid blanking the canvas
+        if (el.clientWidth === 0 || el.clientHeight === 0) return;
+        map.resize();
+        map.redraw(); // synchronous repaint -> no blank frame
+      });
+    });
+    ro.observe(el);
+
     return () => {
-      mapRef.current?.remove();
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      map.remove();
       mapRef.current = null;
     };
-  }, []);
-
-  // Resize when shown again
-  useEffect(() => {
-    if (active) requestAnimationFrame(() => mapRef.current?.resize());
-  }, [active]);
-
-  // Resize when container size changes (navbar toggle, window resize)
-  // 3. Resize when the container size changes (skips 0x0 while hidden)
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const ro = new ResizeObserver(() => {
-      const el = containerRef.current;
-      if (el && el.clientWidth > 0 && el.clientHeight > 0) {
-        mapRef.current?.resize();
-      }
-    });
-    ro.observe(containerRef.current);
-    return () => ro.disconnect();
   }, []);
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;

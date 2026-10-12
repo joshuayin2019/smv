@@ -4,14 +4,16 @@ import { useDisclosure } from '@mantine/hooks';
 import LayoutHeader from './layout_header';
 import LayoutNavbar from './layout_navbar';
 import LayoutMain from './layout_main';
-
+import MapDataManagement from './map_data_management';
 
 export default function LayoutParent() {
   const [mobileOpened, { toggle: toggleMobile }] = useDisclosure();
   const [desktopOpened, { toggle: toggleDesktop }] = useDisclosure(true);
 
-
   return (
+    <>
+    <MapDataManagement />
+  
     <AppShell
       header={{ height: 50 }}
       navbar={{
@@ -39,5 +41,6 @@ export default function LayoutParent() {
         <LayoutMain />
       </AppShell.Main>
     </AppShell>
+    </>
   );
 }

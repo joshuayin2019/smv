@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { basePath } from "@/lib/config";
+import { useGlobalStore } from "@/stores/global_stores";
+
 import Login from "@/components/auth/login";
 import LayoutParent from "@/components/_layout/_layout";
-import { useGlobalStore } from "@/stores/global_stores";
-import { basePath } from "@/lib/config";
-
 
 export default function Home() {
   const { setAuth ,auth } = useGlobalStore();
@@ -27,7 +27,7 @@ export default function Home() {
       }
     };
     checkAuth();
-  }, [setAuth]);
+  }, [setAuth]); //setAuth
 
   if (checking) return null; // or a loading spinner
 

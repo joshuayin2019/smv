@@ -5,7 +5,7 @@
 
 .paper {
   background-color: transparent;
-  border-color: aqua;
+  border-color: aliceblue;
 }
 
 
@@ -17,7 +17,7 @@
 
 .field input{
   background-color: transparent;
-  border-color: aqua;
+  border-color: aliceblue;
   color: white; /* Optional */
   font-style: normal;
 }

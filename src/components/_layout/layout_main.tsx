@@ -50,7 +50,7 @@ export default function LayoutMain() {
                 </Tabs>               
               {/* {activePage} */}
             </Box>
-          )}
+          )}   
     </Box>
   );
 }

@@ -30,11 +30,11 @@ const USER_SQL = `
   SELECT x.*,
     ${scopeAgg("poi", "scope_poi")},
     ${scopeAgg("psa", "scope_psa")},
-    ${scopeAgg("zonalvalue", "scope_zonalvalue")}
+    ${scopeAgg("smv", "scope_smv")}
   FROM data.users x
-  INNER JOIN data.scope y ON x.username = y.username
+  INNER JOIN data.scope y ON x.user_id = y.user_id
   WHERE x.username = $1
-  GROUP BY x.user_id
+  GROUP BY x.id
 `;
 
 const adminUser = (username: string): Auth => ({
