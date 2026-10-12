@@ -271,10 +271,23 @@ export default function PoiLayer() {
         // Fit the group's bounds, but keep the zoom inside the next level's range:
         //  - too far out -> raised to the next level's minzoom (so it never stays on the same level)
         //  - too far in  -> capped just under the next level's maxzoom (so it never skips a level)
-        const fitZoom = cam?.zoom ?? next.min;
-        const zoom = Math.min(Math.max(fitZoom, next.min + ZOOM_EPS), next.max - ZOOM_EPS);
+        const minZoom = next.min + ZOOM_EPS;
+        const maxZoom = next.max - ZOOM_EPS;
+        const fitZoom = cam?.zoom ?? minZoom;
+        const zoom = Math.min(Math.max(fitZoom, minZoom), maxZoom);
+        const clamped = fitZoom < minZoom || fitZoom > maxZoom;
 
-        map.easeTo({ center: cam?.center ?? [lng, lat], zoom });
+        // The marker sits at the average of its POIs, not at the middle of the bounding box.
+        //  - zoom not clamped -> the whole group fits, so centre on the bounds (group fully visible)
+        //  - zoom clamped     -> the bounds no longer fit anyway, so centre on the clicked marker
+        //                        (otherwise it jumps away from where you clicked, often to the right)
+        let center: [number, number] = [lng, lat];
+        if (!clamped && cam?.center) {
+          const resolvedCenter = maplibregl.LngLat.convert(cam.center);
+          center = [resolvedCenter.lng, resolvedCenter.lat];
+        }
+
+        map.easeTo({ center, zoom });
       };
 
       map.on("click", layerId, onGroupClick);

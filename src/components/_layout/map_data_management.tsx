@@ -6,7 +6,6 @@ import { basePath } from "@/lib/config";
 const poi_url = `${basePath}/api/pages/poi`;
 
 export default function MapDataManagement() {
-    const { auth } = useGlobalStore();
     const userId = useGlobalStore((s) => s.auth?.user_id);
     const scopePoi = useGlobalStore((s) => s.auth?.scope_poi);
     const scopeKey = JSON.stringify(scopePoi); // stable value, unlike the object reference
@@ -59,8 +58,8 @@ export default function MapDataManagement() {
     }, [userId, scopeKey]); // eslint may warn about scopePoi; scopeKey covers it
 
     useEffect(() => {
-        console.log(auth);
-    }, []);
+       //load other data
+    }, [userId]);
 
     return null;
 }

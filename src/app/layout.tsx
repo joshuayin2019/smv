@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { MantineProvider } from '@mantine/core';
+import { NavigationProgress } from '@mantine/nprogress';
 
 import "./globals.css";
 
 //Mantine
 import '@mantine/core/styles.css';
-
+import '@mantine/nprogress/styles.css';
 
 
 
@@ -19,6 +20,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en">
       <body>
         <MantineProvider >
+          <NavigationProgress />
           {children}
         </MantineProvider>
       </body>
