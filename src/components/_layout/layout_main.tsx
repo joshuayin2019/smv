@@ -2,6 +2,7 @@ import dynamic from "next/dynamic";
 import { useEffect } from 'react';
 import { Box, Tabs, Loader } from '@mantine/core';
 import { useGlobalStore, DEFAULT_PAGE } from '@/stores/global_stores';
+import PoiLayer from "../map/poi_layer";
 
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
@@ -33,6 +34,7 @@ export default function LayoutMain() {
             style={{ display: showMap ? 'block' : 'none' }}
           >
             <Map active={showMap} />
+            <PoiLayer /> 
           </Box>
 
           {/* Content for pages that don't show the map */}

@@ -23,6 +23,7 @@ export type PoiFeature = {
         reg_code: string | null;
         pro_code: string | null;
         mun_code: string | null;
+        bgy_code: string | null;
     };
 };
 

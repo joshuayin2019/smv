@@ -1,13 +1,15 @@
-// components/map/map.tsx
-import { useEffect, useRef } from 'react';
+// components/map/map.tsx  (basic map only)
+import { useEffect, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
-//import "maplibre-gl/dist/maplibre-gl.css";
+import { useMapStore } from "@/stores/map_stores";
 
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
 
 export default function Map({ active = true }: { active?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const setMap = useMapStore((s) => s.setMap);
+  const [zoom, setZoom] = useState("5.0"); // matches the initial zoom below
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -20,6 +22,16 @@ export default function Map({ active = true }: { active?: boolean }) {
       trackResize: false,
     });
     mapRef.current = map;
+
+    // keep the badge in sync; one decimal is enough, and an unchanged string doesn't re-render
+    const updateZoom = () => setZoom(map.getZoom().toFixed(1));
+    map.on("zoom", updateZoom);
+
+    // share the map only after the style is ready, so layers can be added safely
+    map.on("load", () => {
+      updateZoom();
+      setMap(map);
+    });
 
     const el = containerRef.current;
     let raf = 0;
@@ -37,10 +49,35 @@ export default function Map({ active = true }: { active?: boolean }) {
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      map.off("zoom", updateZoom);
+      setMap(null);
       map.remove();
       mapRef.current = null;
     };
-  }, []);
+  }, [setMap]);
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+
+      {/* zoom level badge */}
+      <div
+        style={{
+          position: "absolute",
+          left: 10,
+          bottom: 10,
+          padding: "2px 8px",
+          borderRadius: 4,
+          background: "rgba(0, 0, 0, 0.65)",
+          color: "#fff",
+          fontSize: 12,
+          fontFamily: "monospace",
+          pointerEvents: "none", // never blocks clicks on the map
+          zIndex: 1,
+        }}
+      >
+        Zoom: {zoom}
+      </div>
+    </div>
+  );
 }
