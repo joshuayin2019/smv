@@ -1,8 +1,10 @@
 import dynamic from "next/dynamic";
-import { useEffect } from 'react';
 import { Box, Tabs, Loader } from '@mantine/core';
 import { useGlobalStore, DEFAULT_PAGE } from '@/stores/global_stores';
+
+//POI
 import PoiLayer from "../pages/poi/map_poi";
+import DrawerPoi from "../pages/poi/drawer_poi";
 
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
@@ -14,11 +16,10 @@ const UserManagementMain = dynamic(
 // Pages where the map is visible
 const HIDE_MAP_PAGES = [DEFAULT_PAGE, 'User Management'];
 
-//Pages
-//import UserManagementMain from '@/components/pages/user_management/user_management_main';
 
 
-export default function LayoutMain() {
+
+export default function LayoutMain({ navbarOpened }: { navbarOpened: boolean }) {
   const { activePage, setActivePage, auth } = useGlobalStore();
   const showMap = !HIDE_MAP_PAGES.includes(activePage);
   const isAdmin = auth?.role === 'admin';
@@ -26,6 +27,9 @@ export default function LayoutMain() {
 
 
   return(
+    <>
+    <DrawerPoi navbarOpened={navbarOpened} />
+    
     <Box pos="relative" h="calc(100dvh - 50px)">
         {/* Map stays mounted; only hidden on other pages */}
           <Box
@@ -54,5 +58,6 @@ export default function LayoutMain() {
             </Box>
           )}   
     </Box>
+    </>
   );
 }

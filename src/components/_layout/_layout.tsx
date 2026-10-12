@@ -21,7 +21,7 @@ export default function LayoutParent() {
         breakpoint: 'sm',
         collapsed: { mobile: !mobileOpened, desktop: !desktopOpened },
       }}
-      transitionDuration={200}
+      transitionDuration={300}
       transitionTimingFunction="ease"
     >
       <AppShell.Header>
@@ -38,7 +38,7 @@ export default function LayoutParent() {
       </AppShell.Navbar>
 
       <AppShell.Main>
-        <LayoutMain />
+        <LayoutMain navbarOpened={desktopOpened} />
       </AppShell.Main>
     </AppShell>
     </>
