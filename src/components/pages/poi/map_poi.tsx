@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef } from "react";
 import * as maplibregl from "maplibre-gl";
 import { useMapStore } from "@/stores/map_stores";
 import { usePoiStore, PoiCollection } from "@/stores/poi_stores";
+import { useGlobalStore } from "@/stores/global_stores";
+
 
 const POI_SOURCE = "poi";
 const GROUP_SOURCE = "poi-groups";
@@ -11,7 +13,7 @@ const POI_LAYER = "poi-circles";
 const DEFAULT_ICON = "poi-default";
 const ICON_PREFIX = "cat-";
 const ICON_URL = (id: string) => `/api/pages/poi/category-icons/${encodeURIComponent(id)}`;
-const ICON_PX = 48; // rasterised size; shown at 24px with pixelRatio 2 (crisp on retina)
+const ICON_PX = 36; // rasterised size; shown at 24px with pixelRatio 2 (crisp on retina)
 
 // maplibre's own data type, so no global GeoJSON namespace is needed
 type GeoJSONData = maplibregl.GeoJSONSourceSpecification["data"];
@@ -22,8 +24,8 @@ type GeoJSONData = maplibregl.GeoJSONSourceSpecification["data"];
 const LEVELS = [
   { level: "all", codeKey: null,       nameKey: null,                minzoom: 0,  maxzoom: 10, color: "#495057" },
   { level: "reg", codeKey: "reg_code", nameKey: "region",            minzoom: 10, maxzoom: 11, color: "#1c7ed6" },
-  { level: "pro", codeKey: "pro_code", nameKey: "province",          minzoom: 11, maxzoom: 13, color: "#7048e8" },
-  { level: "mun", codeKey: "mun_code", nameKey: "city_municipality", minzoom: 13, maxzoom: 14, color: "#0ca678" },
+  { level: "pro", codeKey: "pro_code", nameKey: "province",          minzoom: 11, maxzoom: 12, color: "#7048e8" },
+  { level: "mun", codeKey: "mun_code", nameKey: "city_municipality", minzoom: 12, maxzoom: 14, color: "#0ca678" },
   { level: "bgy", codeKey: "bgy_code", nameKey: "barangay",          minzoom: 14, maxzoom: 16, color: "#f08c00" },
 ] as const;
 
@@ -144,6 +146,7 @@ async function loadCategoryIcon(map: maplibregl.Map, id: string): Promise<boolea
 }
 
 export default function PoiLayer() {
+  const activePage = useGlobalStore((s) => s.activePage);
   const map = useMapStore((s) => s.map);
   const poi = usePoiStore((s) => s.poi);
 
@@ -152,6 +155,12 @@ export default function PoiLayer() {
 
   // category ids already tried (loaded or failed), so we never request the same svg twice
   const triedIcons = useRef<Set<string>>(new Set());
+
+  //For active page handler to avoid blinking\
+  const activePageRef = useRef(activePage);
+  useEffect(() => {
+    activePageRef.current = activePage;
+  }, [activePage]);
 
   // add sources, layers, and handlers once the map is ready
   useEffect(() => {
@@ -228,25 +237,20 @@ export default function PoiLayer() {
 
     // click a POI -> popup with its details
     const onPoiClick = (e: maplibregl.MapLayerMouseEvent) => {
-      const feature = e.features?.[0];
-      if (!feature || feature.geometry.type !== "Point") return;
+      try {
+        if (activePageRef.current !== "Point of Interest") return;
 
-      const props = feature.properties ?? {};
-      const [lng, lat] = feature.geometry.coordinates as [number, number];
+        const feature = e.features?.[0];
+        if (!feature || feature.geometry.type !== "Point") return;
 
-      // build with textContent so values from the database are never parsed as HTML
-      const box = document.createElement("div");
-      const title = document.createElement("strong");
-      title.textContent = String(props.name ?? "");
-      const category = document.createElement("div");
-      category.textContent = String(props.category ?? "");
-      const place = document.createElement("div");
-      place.textContent = [props.barangay, props.city_municipality, props.province]
-        .filter(Boolean)
-        .join(", ");
-      box.append(title, category, place);
+        const props = feature.properties ?? {};
+        const [lng, lat] = feature.geometry.coordinates as [number, number];
 
-      new maplibregl.Popup({ closeButton: true }).setLngLat([lng, lat]).setDOMContent(box).addTo(map);
+        console.log({ props, lng, lat });
+        alert(`You click the poi data kindly see the console log for more info`);
+      } catch (err) {
+        console.error("POI click failed:", err instanceof Error ? err.message : err);
+      }
     };
 
     map.on("click", POI_LAYER, onPoiClick);
@@ -271,10 +275,23 @@ export default function PoiLayer() {
         // Fit the group's bounds, but keep the zoom inside the next level's range:
         //  - too far out -> raised to the next level's minzoom (so it never stays on the same level)
         //  - too far in  -> capped just under the next level's maxzoom (so it never skips a level)
-        const fitZoom = cam?.zoom ?? next.min;
-        const zoom = Math.min(Math.max(fitZoom, next.min + ZOOM_EPS), next.max - ZOOM_EPS);
+        const minZoom = next.min + ZOOM_EPS;
+        const maxZoom = next.max - ZOOM_EPS;
+        const fitZoom = cam?.zoom ?? minZoom;
+        const zoom = Math.min(Math.max(fitZoom, minZoom), maxZoom);
+        const clamped = fitZoom < minZoom || fitZoom > maxZoom;
 
-        map.easeTo({ center: cam?.center ?? [lng, lat], zoom });
+        // The marker sits at the average of its POIs, not at the middle of the bounding box.
+        //  - zoom not clamped -> the whole group fits, so centre on the bounds (group fully visible)
+        //  - zoom clamped     -> the bounds no longer fit anyway, so centre on the clicked marker
+        //                        (otherwise it jumps away from where you clicked, often to the right)
+        let center: [number, number] = [lng, lat];
+        if (!clamped && cam?.center) {
+          const resolvedCenter = maplibregl.LngLat.convert(cam.center);
+          center = [resolvedCenter.lng, resolvedCenter.lat];
+        }
+
+        map.easeTo({ center, zoom });
       };
 
       map.on("click", layerId, onGroupClick);

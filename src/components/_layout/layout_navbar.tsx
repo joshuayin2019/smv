@@ -23,6 +23,7 @@ import {
 
 
 import { useGlobalStore } from '@/stores/global_stores';
+import { usePoiStore } from '@/stores/poi_stores';
 import { basePath } from "@/lib/config";
 
 
@@ -247,6 +248,7 @@ function NavbarFooter({
 export default function LayoutNavbar() {
   const [openSection, setOpenSection] = useState<string | null>(SECTIONS[0].label);
   const { clearAuth, setActivePage, activePage } = useGlobalStore();
+  const { clearPoi } = usePoiStore();
 
 
   const handleLogout = async () => {
@@ -255,6 +257,9 @@ export default function LayoutNavbar() {
       credentials: "include",
     });
     clearAuth(); // the page switches back to <Login />
+    clearPoi(); //clear poi
+
+
   };
 
   return (

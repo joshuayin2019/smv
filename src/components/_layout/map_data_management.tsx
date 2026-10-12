@@ -2,32 +2,29 @@ import { useEffect } from "react";
 import { useGlobalStore } from "@/stores/global_stores";
 import { usePoiStore, PoiCollection } from "@/stores/poi_stores";
 import { basePath } from "@/lib/config";
+import { trackProgress } from "@/lib/progress";
 
 const poi_url = `${basePath}/api/pages/poi`;
 
 export default function MapDataManagement() {
     const userId = useGlobalStore((s) => s.auth?.user_id);
     const scopePoi = useGlobalStore((s) => s.auth?.scope_poi);
-    const scopeKey = JSON.stringify(scopePoi); // stable value, unlike the object reference
+    const scopeKey = JSON.stringify(scopePoi);
 
-    //POI stores
     const setPoi = usePoiStore((s) => s.setPoi);
     const clearPoi = usePoiStore((s) => s.clearPoi);
 
-    //POI
+    // 1) POI
     useEffect(() => {
-        // user_id is 0 for admin, so don't use a falsy check here
         if (userId == null) {
-            clearPoi(); // logged out: drop the data
+            clearPoi();
             return;
         }
-        
-        if (!scopePoi) return; // user_id is 0 for admin, so no falsy check on userId
+        if (!scopePoi) return;
 
         const controller = new AbortController();
 
-        //Load POI Data
-        const loadPOI = async () => {
+        trackProgress(async () => {
             try {
                 const response = await fetch(poi_url, {
                     method: "POST",
@@ -35,7 +32,6 @@ export default function MapDataManagement() {
                     body: JSON.stringify({ data: scopePoi, mode: "loadpoi" }),
                     signal: controller.signal,
                 });
-
                 const data = await response.json();
 
                 if (!response.ok) {
@@ -43,23 +39,54 @@ export default function MapDataManagement() {
                         typeof data?.message === "string" ? data.message : JSON.stringify(data)
                     );
                 }
-                console.log(data);
                 setPoi(data as PoiCollection);
-
+                //console.log(data);
             } catch (err) {
-                if (err instanceof DOMException && err.name === "AbortError") return; // expected
+                if (err instanceof DOMException && err.name === "AbortError") return;
                 console.log(err instanceof Error ? err.message : err);
             }
-        };
+        });
 
-        loadPOI();
+        return () => controller.abort();
+    }, [userId, scopeKey]);
 
-        return () => controller.abort(); // cancels the first run in Strict Mode, and on unmount
-    }, [userId, scopeKey]); // eslint may warn about scopePoi; scopeKey covers it
+    // 2) second dataset
+    // useEffect(() => {
+    //     if (userId == null) return;
+    //     const controller = new AbortController();
 
-    useEffect(() => {
-       //load other data
-    }, [userId]);
+    //     trackProgress(async () => {
+    //         try {
+    //             const res = await fetch(`${basePath}/api/pages/other`, {
+    //                 signal: controller.signal,
+    //             });
+    //             const data = await res.json();
+    //             // setOther(data);
+    //         } catch (err) {
+    //             if (err instanceof DOMException && err.name === "AbortError") return;
+    //             console.log(err);
+    //         }
+    //     });
+
+    //     return () => controller.abort();
+    // }, [userId]);
+
+    // 3) third dataset: same pattern
+    // useEffect(() => {
+    //     if (userId == null) return;
+    //     const controller = new AbortController();
+
+    //     trackProgress(async () => {
+    //         try {
+    //             // fetch(..., { signal: controller.signal })
+    //         } catch (err) {
+    //             if (err instanceof DOMException && err.name === "AbortError") return;
+    //             console.log(err);
+    //         }
+    //     });
+
+    //     return () => controller.abort();
+    // }, [userId]);
 
     return null;
 }

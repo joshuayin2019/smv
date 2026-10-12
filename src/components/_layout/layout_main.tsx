@@ -2,7 +2,7 @@ import dynamic from "next/dynamic";
 import { useEffect } from 'react';
 import { Box, Tabs, Loader } from '@mantine/core';
 import { useGlobalStore, DEFAULT_PAGE } from '@/stores/global_stores';
-import PoiLayer from "../map/poi_layer";
+import PoiLayer from "../pages/poi/map_poi";
 
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
