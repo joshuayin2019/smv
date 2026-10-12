@@ -10,7 +10,7 @@ const emptyCollection = { type: "FeatureCollection", features: [] as unknown[] }
 const SELECT_POI = `
     SELECT json_build_object(
         'type', 'Feature',
-        'id', x.fid,
+        'id', x.id,
         'geometry', ST_AsGeoJSON(
             ST_Transform(
                 ST_SetSRID(x.geom, (
@@ -26,7 +26,7 @@ const SELECT_POI = `
             'id', x.fid,
             'name', x.name,
             'category', z.name,
-            'category_id', z.category_id,
+            'category_id', x.category_id,
             'ft_traffic', x.ft_traffic,
             'rd_name', x.rd_name,
             'as_of', x.as_of,
@@ -38,56 +38,56 @@ const SELECT_POI = `
             'filename', x.filename,
             'reg_code', x.reg_code,
             'pro_code', x.pro_code,
-            'mun_code', x.mun_code
+            'mun_code', x.mun_code,
+            'bgy_code', x.bgy_code
         )
     ) AS feature
     FROM data.poi x
-    INNER JOIN core.brgy_bndry y ON x.bgy_code = y.bgy_code
     INNER JOIN lookup.category z ON x.category_id = z.category_id
 `;
 
-function buildWhere(item: PoiScopeItem): { where: string; params: string[] } | null {
-    switch (item.scope_level) {
-        case 1:
-            return { where: "", params: [] };
-        case 2:
-            return item.code ? { where: "WHERE y.reg_code = $1", params: [item.code] } : null;
-        case 3:
-            return item.code ? { where: "WHERE y.pro_code = $1", params: [item.code] } : null;
-        case 4:
-            if (!item.code) return null;
-            // City of Manila is matched at province level
-            return item.code === "PH133900000"
-                ? { where: "WHERE y.pro_code = $1", params: [item.code] }
-                : { where: "WHERE y.mun_code = $1", params: [item.code] };
-        default:
-            return null; // unknown level: skip instead of running an unfiltered query
+const LEVEL_COLUMN: Record<number, string> = {
+    2: "x.reg_code",
+    3: "x.pro_code",
+    4: "x.mun_code",
+};
+
+const GEOM_FILTER = "x.geom IS NOT NULL";
+
+// One WHERE for all scope items: a row matching several items is still returned once
+function buildWhere(items: PoiScopeItem[]): { where: string; params: string[] } | null {
+    // Level 1 already means "everything"
+    if (items.some((i) => i.scope_level === 1)) {
+        return { where: `WHERE ${GEOM_FILTER}`, params: [] };
     }
+
+    const conditions: string[] = [];
+    const params: string[] = [];
+
+    for (const item of items) {
+        const column = LEVEL_COLUMN[item.scope_level];
+        if (!column || !item.code) continue; // unknown level or missing code: skip
+        params.push(item.code);
+        conditions.push(`${column} = $${params.length}`);
+    }
+
+    if (conditions.length === 0) return null;
+    return { where: `WHERE ${GEOM_FILTER} AND (${conditions.join(" OR ")})`, params };
 }
 
 export async function loadPoi(scope: unknown){
     try {
         if (!Array.isArray(scope) || scope.length === 0) return emptyCollection;
 
-        const items = scope as PoiScopeItem[];
-        
-        // Level 1 already means "everything", so one query is enough
-        const queries = items.some((i) => i.scope_level === 1)
-            ? [{ where: "", params: [] as string[] }]
-            : items.map(buildWhere).filter((q): q is NonNullable<typeof q> => q !== null);
+        const q = buildWhere(scope as PoiScopeItem[]);
+        if (!q) return emptyCollection;
 
-        const unique = new Map<number | string, unknown>();
+        const result = await conn.query(`${SELECT_POI} ${q.where}`, q.params);
 
-        for (const q of queries) {
-            const result = await conn.query(`${SELECT_POI} ${q.where}`, q.params);
-            for (const row of result.rows) {
-                const feature = row.feature;
-                if (!feature || feature.id == null) continue;
-                if (!unique.has(feature.id)) unique.set(feature.id, feature);
-            }
-        }
-
-        return { type: "FeatureCollection", features: Array.from(unique.values()) };
+        return {
+            type: "FeatureCollection",
+            features: result.rows.map((row) => row.feature).filter(Boolean),
+        };
     } catch (err){
          console.warn("poi_controller:", err);
          return { error: err instanceof Error ? err.message : String(err) };

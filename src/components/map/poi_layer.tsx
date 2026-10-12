@@ -1,5 +1,5 @@
 // components/map/poi_layer.tsx  (POI points + admin-level clustering)
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as maplibregl from "maplibre-gl";
 import { useMapStore } from "@/stores/map_stores";
 import { usePoiStore, PoiCollection } from "@/stores/poi_stores";
@@ -8,20 +8,36 @@ const POI_SOURCE = "poi";
 const GROUP_SOURCE = "poi-groups";
 const POI_LAYER = "poi-circles";
 
+const DEFAULT_ICON = "poi-default";
+const ICON_PREFIX = "cat-";
+const ICON_URL = (id: string) => `/api/pages/poi/category-icons/${encodeURIComponent(id)}`;
+const ICON_PX = 48; // rasterised size; shown at 24px with pixelRatio 2 (crisp on retina)
+
 // maplibre's own data type, so no global GeoJSON namespace is needed
 type GeoJSONData = maplibregl.GeoJSONSourceSpecification["data"];
 
-// Priority order: region -> province -> municipality -> barangay -> individual POIs.
+// Priority order: all -> region -> province -> municipality -> barangay -> individual POIs.
 // A layer is visible from minzoom (inclusive) to maxzoom (exclusive).
+// "all" has no codeKey/nameKey: every POI is merged into a single group.
 const LEVELS = [
-  { level: "reg", codeKey: "reg_code", nameKey: "region",            minzoom: 0,  maxzoom: 10,  color: "#1c7ed6" },
-  { level: "pro", codeKey: "pro_code", nameKey: "province",          minzoom: 10,  maxzoom: 12,  color: "#7048e8" },
-  { level: "mun", codeKey: "mun_code", nameKey: "city_municipality", minzoom: 12,  maxzoom: 14, color: "#0ca678" },
-  { level: "bgy", codeKey: "bgy_code", nameKey: "barangay",          minzoom: 14, maxzoom: 17, color: "#f08c00" },
+  { level: "all", codeKey: null,       nameKey: null,                minzoom: 0,  maxzoom: 10, color: "#495057" },
+  { level: "reg", codeKey: "reg_code", nameKey: "region",            minzoom: 10, maxzoom: 11, color: "#1c7ed6" },
+  { level: "pro", codeKey: "pro_code", nameKey: "province",          minzoom: 11, maxzoom: 13, color: "#7048e8" },
+  { level: "mun", codeKey: "mun_code", nameKey: "city_municipality", minzoom: 13, maxzoom: 14, color: "#0ca678" },
+  { level: "bgy", codeKey: "bgy_code", nameKey: "barangay",          minzoom: 14, maxzoom: 16, color: "#f08c00" },
 ] as const;
 
-const POINTS_MINZOOM = 13; // individual POIs appear from here
+const POINTS_MINZOOM = 16; // individual POIs appear from here (right after the last group level)
+const POINTS_MAXZOOM = 18; // zoom cap when clicking the last group level (bgy -> individual POIs)
+const ZOOM_EPS = 0.01; // keeps the target strictly inside the next level's [minzoom, maxzoom)
 const GROUP_FONT = ["Montserrat Medium"]; // must exist in the basemap style's glyph server
+
+// zoom range of the level that comes after LEVELS[index]
+// (all -> reg -> pro -> mun -> bgy -> individual POIs)
+function nextLevelRange(index: number): { min: number; max: number } {
+  const next = LEVELS[index + 1];
+  return next ? { min: next.minzoom, max: next.maxzoom } : { min: POINTS_MINZOOM, max: POINTS_MAXZOOM };
+}
 
 type Group = {
   code: string;
@@ -45,8 +61,10 @@ function buildGroups(poi: PoiCollection): GeoJSONData {
     for (const f of poi.features) {
       if (f.geometry.type !== "Point") continue;
       const [lng, lat] = f.geometry.coordinates as [number, number];
-      const code = f.properties[lvl.codeKey] ?? "none";
-      const name = f.properties[lvl.nameKey] ?? "Unassigned";
+
+      // "all" level: a single shared group; other levels group by their code column
+      const code = lvl.codeKey ? f.properties[lvl.codeKey] ?? "none" : "all";
+      const name = lvl.nameKey ? f.properties[lvl.nameKey] ?? "Unassigned" : "All POIs";
 
       let g = groups.get(code);
       if (!g) {
@@ -83,6 +101,48 @@ function buildGroups(poi: PoiCollection): GeoJSONData {
   return { type: "FeatureCollection", features } as unknown as GeoJSONData;
 }
 
+// distinct category_id values present in the POI data
+function collectCategoryIds(poi: PoiCollection): string[] {
+  const ids = new Set<string>();
+  for (const f of poi.features) {
+    const id = (f.properties as Record<string, unknown>).category_id;
+    if (id !== null && id !== undefined && id !== "") ids.add(String(id));
+  }
+  return [...ids];
+}
+
+// plain dot used when a category has no svg (or it has not loaded yet)
+function makeDefaultIcon(): ImageData {
+  const canvas = document.createElement("canvas");
+  canvas.width = ICON_PX;
+  canvas.height = ICON_PX;
+  const ctx = canvas.getContext("2d")!;
+  ctx.beginPath();
+  ctx.arc(ICON_PX / 2, ICON_PX / 2, ICON_PX / 2 - 4, 0, Math.PI * 2);
+  ctx.fillStyle = "#e8590c";
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "#ffffff";
+  ctx.stroke();
+  return ctx.getImageData(0, 0, ICON_PX, ICON_PX);
+}
+
+// fetch one svg through the route and register it on the map as `cat-<id>`
+async function loadCategoryIcon(map: maplibregl.Map, id: string): Promise<boolean> {
+  const name = `${ICON_PREFIX}${id}`;
+  if (map.hasImage(name)) return true;
+
+  const img = new Image(ICON_PX, ICON_PX); // explicit size so svgs with only a viewBox still rasterise
+  img.src = ICON_URL(id);
+  try {
+    await img.decode();
+  } catch {
+    return false; // 404 or invalid svg -> POIs of this category use the default dot
+  }
+  if (!map.hasImage(name)) map.addImage(name, img, { pixelRatio: 2 });
+  return true;
+}
+
 export default function PoiLayer() {
   const map = useMapStore((s) => s.map);
   const poi = usePoiStore((s) => s.poi);
@@ -90,16 +150,21 @@ export default function PoiLayer() {
   // recomputed only when the POI data changes
   const groups = useMemo(() => buildGroups(poi), [poi]);
 
+  // category ids already tried (loaded or failed), so we never request the same svg twice
+  const triedIcons = useRef<Set<string>>(new Set());
+
   // add sources, layers, and handlers once the map is ready
   useEffect(() => {
     if (!map) return;
 
     const current = usePoiStore.getState().poi; // current value, without re-running on every change
 
+    if (!map.hasImage(DEFAULT_ICON)) map.addImage(DEFAULT_ICON, makeDefaultIcon(), { pixelRatio: 2 });
+
     map.addSource(POI_SOURCE, { type: "geojson", data: current as unknown as GeoJSONData });
     map.addSource(GROUP_SOURCE, { type: "geojson", data: buildGroups(current) });
 
-    // group markers: one circle layer + one label layer per admin level
+    // group markers: one circle layer + one label layer per level
     for (const lvl of LEVELS) {
       map.addLayer({
         id: `poi-group-${lvl.level}`,
@@ -135,18 +200,22 @@ export default function PoiLayer() {
       });
     }
 
-    // individual POIs, only at the closest zoom levels
+    // individual POIs with their category svg, only at the closest zoom levels
     map.addLayer({
       id: POI_LAYER,
-      type: "circle",
+      type: "symbol",
       source: POI_SOURCE,
       minzoom: POINTS_MINZOOM,
-      paint: {
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 4, 16, 7],
-        "circle-color": "#e8590c",
-        "circle-stroke-width": 1,
-        "circle-stroke-color": "#ffffff",
-        "circle-opacity": 0.85,
+      layout: {
+        // cat-<category_id> if that image is registered, otherwise the default dot
+        "icon-image": [
+          "coalesce",
+          ["image", ["concat", ICON_PREFIX, ["to-string", ["get", "category_id"]]]],
+          ["image", DEFAULT_ICON],
+        ],
+        "icon-size": ["interpolate", ["linear"], ["zoom"], 14, 0.7, 17, 1],
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
       },
     });
 
@@ -184,9 +253,10 @@ export default function PoiLayer() {
     map.on("mouseenter", POI_LAYER, onEnter);
     map.on("mouseleave", POI_LAYER, onLeave);
 
-    // click a group -> zoom in until the next level appears
-    const groupHandlers = LEVELS.map((lvl) => {
+    // click a group -> zoom into the NEXT level only (all -> reg -> pro -> mun -> bgy -> POIs)
+    const groupHandlers = LEVELS.map((lvl, index) => {
       const layerId = `poi-group-${lvl.level}`;
+      const next = nextLevelRange(index);
 
       const onGroupClick = (e: maplibregl.MapLayerMouseEvent) => {
         const feature = e.features?.[0];
@@ -198,8 +268,12 @@ export default function PoiLayer() {
         const bounds = new maplibregl.LngLatBounds([p.minLng, p.minLat], [p.maxLng, p.maxLat]);
         const cam = map.cameraForBounds(bounds, { padding: 80 });
 
-        // fitting the bounds alone can still land inside the same level, so go at least to the next one
-        const zoom = Math.min(Math.max(cam?.zoom ?? 0, lvl.maxzoom + 0.2), 17);
+        // Fit the group's bounds, but keep the zoom inside the next level's range:
+        //  - too far out -> raised to the next level's minzoom (so it never stays on the same level)
+        //  - too far in  -> capped just under the next level's maxzoom (so it never skips a level)
+        const fitZoom = cam?.zoom ?? next.min;
+        const zoom = Math.min(Math.max(fitZoom, next.min + ZOOM_EPS), next.max - ZOOM_EPS);
+
         map.easeTo({ center: cam?.center ?? [lng, lat], zoom });
       };
 
@@ -229,6 +303,10 @@ export default function PoiLayer() {
         if (map.getLayer(POI_LAYER)) map.removeLayer(POI_LAYER);
         if (map.getSource(GROUP_SOURCE)) map.removeSource(GROUP_SOURCE);
         if (map.getSource(POI_SOURCE)) map.removeSource(POI_SOURCE);
+        if (map.hasImage(DEFAULT_ICON)) map.removeImage(DEFAULT_ICON);
+
+        // images are gone with the layer cleanup, so allow them to be loaded again next time
+        triedIcons.current.clear();
       } catch {
         // the map was already removed, so there is nothing left to clean up
       }
@@ -241,6 +319,18 @@ export default function PoiLayer() {
     (map.getSource(POI_SOURCE) as maplibregl.GeoJSONSource | undefined)?.setData(poi as unknown as GeoJSONData);
     (map.getSource(GROUP_SOURCE) as maplibregl.GeoJSONSource | undefined)?.setData(groups);
   }, [map, poi, groups]);
+
+  // load the svg for every category that appears in the data (only the ones not tried yet)
+  useEffect(() => {
+    if (!map) return;
+
+    const pending = collectCategoryIds(poi).filter((id) => !triedIcons.current.has(id));
+    if (pending.length === 0) return;
+    pending.forEach((id) => triedIcons.current.add(id));
+
+    // adding an image makes maplibre re-render the layer, so POIs switch from the dot to their icon
+    Promise.all(pending.map((id) => loadCategoryIcon(map, id).catch(() => false)));
+  }, [map, poi]);
 
   return null;
 }
