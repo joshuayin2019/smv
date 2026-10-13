@@ -325,6 +325,7 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
     const onPoiClick = (e: maplibregl.MapLayerMouseEvent) => {
       try {
         if (activePageRef.current !== POI_PAGE) return;
+        if (usePoiStore.getState().pickingCenter) return; // the click is picking the radius center
 
         const feature = e.features?.[0];
         if (!feature || feature.geometry.type !== "Point") return;
@@ -349,6 +350,8 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
       const next = nextLevelRange(index);
 
       const onGroupClick = (e: maplibregl.MapLayerMouseEvent) => {
+        if (usePoiStore.getState().pickingCenter) return; // the click is picking the radius center
+
         const feature = e.features?.[0];
         if (!feature || feature.geometry.type !== "Point") return;
 

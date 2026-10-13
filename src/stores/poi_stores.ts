@@ -36,19 +36,36 @@ export type PoiCollection = {
 
 export const emptyPoi: PoiCollection = { type: "FeatureCollection", features: [] };
 
+// Radius filter inputs. "" = not filled in yet.
+// km defaults to (and never goes below) MIN_RADIUS_KM, so picking a center is enough to start filtering.
+export const MIN_RADIUS_KM = 1;
+export type PoiRadius = { lat: number | ""; lng: number | ""; km: number | "" };
+export const emptyRadius: PoiRadius = { lat: "", lng: "", km: MIN_RADIUS_KM };
+
 type PoiState = {
     poi: PoiCollection;
     // rows currently visible in the table after search/filters (null = table has not reported yet)
     filteredPoi: PoiProperties[] | null;
+    // radius filter (center + distance), shared by the table and the map
+    radius: PoiRadius;
+    // true while the next map click should set the radius center
+    pickingCenter: boolean;
     setPoi: (poi: PoiCollection) => void;
     setFilteredPoi: (rows: PoiProperties[] | null) => void;
+    setRadius: (r: Partial<PoiRadius>) => void;
+    setPickingCenter: (v: boolean) => void;
     clearPoi: () => void;
 };
 
 export const usePoiStore = create<PoiState>((set) => ({
     poi: emptyPoi,
     filteredPoi: null,
+    radius: emptyRadius,
+    pickingCenter: false,
     setPoi: (poi) => set({ poi }),
     setFilteredPoi: (filteredPoi) => set({ filteredPoi }),
-    clearPoi: () => set({ poi: emptyPoi, filteredPoi: null }),
+    setRadius: (r) => set((s) => ({ radius: { ...s.radius, ...r } })),
+    setPickingCenter: (pickingCenter) => set({ pickingCenter }),
+    clearPoi: () =>
+        set({ poi: emptyPoi, filteredPoi: null, radius: emptyRadius, pickingCenter: false }),
 }));

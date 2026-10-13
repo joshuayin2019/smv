@@ -6,22 +6,39 @@ import {
   Group,
   Menu,
   MultiSelect,
+  NumberInput,
   TextInput,
   ActionIcon,
 } from '@mantine/core';
 import { useDebouncedValue, useElementSize, useLocalStorage } from '@mantine/hooks';
-import { IconColumns3, IconSearch, IconX } from '@tabler/icons-react';
+import { IconColumns3, IconCurrentLocation, IconSearch, IconX } from '@tabler/icons-react';
 import { DataTable, type DataTableColumn, type DataTableSortStatus } from 'mantine-datatable';
-import { usePoiStore, emptyPoi, type PoiFeature } from '@/stores/poi_stores';
+import {
+  usePoiStore,
+  emptyPoi,
+  emptyRadius,
+  MIN_RADIUS_KM,
+  type PoiFeature,
+} from '@/stores/poi_stores';
 import { BORDER, HEADER_BG, HOVER_BG, NAVY, PANEL_BG } from '@/lib/theme_colors';
 
-// Properties from the feature plus a guaranteed-unique key
-type PoiRow = PoiFeature['properties'] & { rowKey: string };
+// Properties from the feature plus a guaranteed-unique key and the point coordinates
+type PoiRow = PoiFeature['properties'] & {
+  rowKey: string;
+  lng: number | null;
+  lat: number | null;
+  distance_km: number | null; // only filled while a radius filter is active
+};
+
+// A radius filter that is fully filled in (center + distance)
+type ActiveRadius = { lat: number; lng: number; km: number };
 
 // Measured from the rendered table (fz="xs"); tweak if a little blank space remains
 const ROW_HEIGHT = 30.5;
 const HEADER_HEIGHT = 31;
 const FOOTER_HEIGHT = 42;
+
+const DISTANCE_COL_WIDTH = 120;
 
 // All columns the user can show/hide, with a fixed width in px
 const COLUMN_DEFS: {
@@ -69,6 +86,7 @@ const SEARCH_FIELDS: (keyof PoiRow)[] = [
 ];
 
 const DEFAULT_SORT: DataTableSortStatus<PoiRow> = { columnAccessor: 'name', direction: 'asc' };
+const DISTANCE_SORT: DataTableSortStatus<PoiRow> = { columnAccessor: 'distance_km', direction: 'asc' };
 
 // Everything that triggers heavy processing, bundled so it can be deferred as one unit
 type Query = {
@@ -76,6 +94,7 @@ type Query = {
   search: string;
   filters: Filters;
   sortStatus: DataTableSortStatus<PoiRow>;
+  radius: ActiveRadius | null;
 };
 
 // Used for the very first render, so the loader paints before the heavy work starts
@@ -84,6 +103,7 @@ const EMPTY_QUERY: Query = {
   search: '',
   filters: EMPTY_FILTERS,
   sortStatus: DEFAULT_SORT,
+  radius: null,
 };
 
 function uniqueSorted(values: (string | null | undefined)[]) {
@@ -92,9 +112,26 @@ function uniqueSorted(values: (string | null | undefined)[]) {
   );
 }
 
+// Great-circle (haversine) distance between two lat/lng points, in km
+function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLng = (lng2 - lng1) * rad;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(a));
+}
+
 export default function DataTablePOI() {
   const poi = usePoiStore((s) => s.poi);
   const setFilteredPoi = usePoiStore((s) => s.setFilteredPoi);
+
+  // Radius filter state lives in the store so the map can draw the circle / pick the center
+  const radius = usePoiStore((s) => s.radius);
+  const setRadius = usePoiStore((s) => s.setRadius);
+  const pickingCenter = usePoiStore((s) => s.pickingCenter);
+  const setPickingCenter = usePoiStore((s) => s.setPickingCenter);
 
   // ----- UI state (updates instantly) ---------------------------------------
   const [search, setSearch] = useState('');
@@ -104,6 +141,21 @@ export default function DataTablePOI() {
 
   const setFilter = (key: FilterKey, values: string[]) =>
     setFilters((cur) => ({ ...cur, [key]: values }));
+
+  // The radius filters as soon as the center (lat + lng) is set; km falls back to the 1 km minimum
+  const activeRadius = useMemo<ActiveRadius | null>(() => {
+    const { lat, lng, km } = radius;
+    if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+    return { lat, lng, km: typeof km === 'number' && km >= MIN_RADIUS_KM ? km : MIN_RADIUS_KM };
+  }, [radius]);
+
+  // Nearest first while a radius is active; back to the default order when it is cleared
+  const hasRadius = activeRadius !== null;
+  useEffect(() => {
+    setSortStatus(hasRadius ? DISTANCE_SORT : DEFAULT_SORT);
+  }, [hasRadius]);
+
+  const radiusTouched = radius.lat !== '' || radius.lng !== '' || radius.km !== MIN_RADIUS_KM;
 
   // Which columns are displayed (remembered between visits)
   // Key was bumped to -v2 so the new Region column shows up for existing users
@@ -124,19 +176,25 @@ export default function DataTablePOI() {
   // ----- Deferred processing -------------------------------------------------
   // `query` is the latest request; `deferred` lags behind while the heavy work runs.
   const query = useMemo<Query>(
-    () => ({ poi, search: debouncedSearch, filters, sortStatus }),
-    [poi, debouncedSearch, filters, sortStatus]
+    () => ({ poi, search: debouncedSearch, filters, sortStatus, radius: activeRadius }),
+    [poi, debouncedSearch, filters, sortStatus, activeRadius]
   );
   const deferred = useDeferredValue(query, EMPTY_QUERY);
   const processing = deferred !== query; // true while the table is still catching up
 
-  // ----- Data pipeline: rows -> filter -> search -> sort -> page -------------
+  // ----- Data pipeline: rows -> filter -> search -> radius -> sort -> page ---
   const rows: PoiRow[] = useMemo(
     () =>
-      deferred.poi.features.map((f, i) => ({
-        ...f.properties,
-        rowKey: `${f.id ?? f.properties.fid}-${i}`, // index keeps it unique even if ids repeat
-      })),
+      deferred.poi.features.map((f, i) => {
+        const c = f.geometry.type === 'Point' ? (f.geometry.coordinates as [number, number]) : null;
+        return {
+          ...f.properties,
+          rowKey: `${f.id ?? f.properties.fid}-${i}`, // index keeps it unique even if ids repeat
+          lng: c?.[0] ?? null,
+          lat: c?.[1] ?? null,
+          distance_km: null,
+        };
+      }),
     [deferred.poi]
   );
 
@@ -151,28 +209,52 @@ export default function DataTablePOI() {
 
   const filteredRows = useMemo(() => {
     const q = deferred.search.trim().toLowerCase();
+    const rad = deferred.radius;
 
     // Only the filters that are actually in use; Sets make the lookup fast
     const active = FILTER_KEYS.filter((k) => deferred.filters[k].length > 0).map(
       (k) => [k, new Set(deferred.filters[k])] as const
     );
 
-    return rows.filter((r) => {
+    const out: PoiRow[] = [];
+    for (const r of rows) {
+      let ok = true;
       for (const [key, values] of active) {
-        if (!values.has(String(r[key] ?? ''))) return false;
+        if (!values.has(String(r[key] ?? ''))) {
+          ok = false;
+          break;
+        }
       }
-      if (!q) return true;
-      return SEARCH_FIELDS.some((k) => String(r[k] ?? '').toLowerCase().includes(q));
-    });
-  }, [rows, deferred.search, deferred.filters]);
+      if (!ok) continue;
+
+      if (q && !SEARCH_FIELDS.some((k) => String(r[k] ?? '').toLowerCase().includes(q))) continue;
+
+      if (rad) {
+        if (r.lat == null || r.lng == null) continue; // no coordinates -> cannot be inside the radius
+        const d = distanceKm(rad.lat, rad.lng, r.lat, r.lng);
+        if (d > rad.km) continue;
+        out.push({ ...r, distance_km: d });
+      } else {
+        out.push(r);
+      }
+    }
+    return out;
+  }, [rows, deferred.search, deferred.filters, deferred.radius]);
 
   // Share the visible (filtered) rows with the summary chart
   useEffect(() => {
     setFilteredPoi(filteredRows);
   }, [filteredRows, setFilteredPoi]);
 
-  // When the table goes away, let the chart fall back to all POIs
-  useEffect(() => () => setFilteredPoi(null), [setFilteredPoi]);
+  // When the table goes away, let the chart fall back to all POIs and drop the radius
+  useEffect(
+    () => () => {
+      setFilteredPoi(null);
+      setPickingCenter(false);
+      setRadius(emptyRadius);
+    },
+    [setFilteredPoi, setPickingCenter, setRadius]
+  );
 
   const sortedRows = useMemo(() => {
     const key = deferred.sortStatus.columnAccessor as keyof PoiRow;
@@ -213,40 +295,51 @@ export default function DataTablePOI() {
   }, [sortedRows, page, pageSize]);
 
   // ----- Columns -------------------------------------------------------------
-  const columns: DataTableColumn<PoiRow>[] = useMemo(
-    () =>
-      COLUMN_DEFS.map((def) => {
-        const col: DataTableColumn<PoiRow> = {
-          accessor: def.accessor,
-          title: def.title,
-          width: def.width,
-          textAlign: def.textAlign,
-          hidden: !visible.includes(def.accessor as string),
-        };
+  const columns: DataTableColumn<PoiRow>[] = useMemo(() => {
+    const cols = COLUMN_DEFS.map((def) => {
+      const col: DataTableColumn<PoiRow> = {
+        accessor: def.accessor,
+        title: def.title,
+        width: def.width,
+        textAlign: def.textAlign,
+        hidden: !visible.includes(def.accessor as string),
+      };
 
-        // Filter inputs use the instant state so they respond immediately
-        if ((FILTER_KEYS as readonly string[]).includes(def.accessor as string)) {
-          const key = def.accessor as FilterKey;
-          col.filtering = filters[key].length > 0;
-          col.filter = (
-            <MultiSelect
-              label={def.title}
-              placeholder={`Pick ${def.title.toLowerCase()}`}
-              data={filterOptions[key]}
-              value={filters[key]}
-              onChange={(values) => setFilter(key, values)}
-              searchable
-              clearable
-              limit={100} // barangay has thousands of options; only render the first matches
-              comboboxProps={{ withinPortal: false }}
-            />
-          );
-        }
+      // Filter inputs use the instant state so they respond immediately
+      if ((FILTER_KEYS as readonly string[]).includes(def.accessor as string)) {
+        const key = def.accessor as FilterKey;
+        col.filtering = filters[key].length > 0;
+        col.filter = (
+          <MultiSelect
+            label={def.title}
+            placeholder={`Pick ${def.title.toLowerCase()}`}
+            data={filterOptions[key]}
+            value={filters[key]}
+            onChange={(values) => setFilter(key, values)}
+            searchable
+            clearable
+            limit={100} // barangay has thousands of options; only render the first matches
+            comboboxProps={{ withinPortal: false }}
+          />
+        );
+      }
 
-        return col;
-      }),
-    [visible, filters, filterOptions]
-  );
+      return col;
+    });
+
+    // Distance column only exists while a radius filter is applied to the data
+    if (deferred.radius) {
+      cols.push({
+        accessor: 'distance_km',
+        title: 'Distance (km)',
+        width: DISTANCE_COL_WIDTH,
+        textAlign: 'right',
+        render: (r) => (r.distance_km == null ? '' : r.distance_km.toFixed(2)),
+      });
+    }
+
+    return cols;
+  }, [visible, filters, filterOptions, deferred.radius]);
 
   // Total width of the columns that are currently shown
   const totalWidth = useMemo(
@@ -254,8 +347,8 @@ export default function DataTablePOI() {
       COLUMN_DEFS.filter((c) => visible.includes(c.accessor as string)).reduce(
         (sum, c) => sum + c.width,
         0
-      ),
-    [visible]
+      ) + (deferred.radius ? DISTANCE_COL_WIDTH : 0),
+    [visible, deferred.radius]
   );
 
   return (
@@ -314,6 +407,72 @@ export default function DataTablePOI() {
         </Menu>
       </Group>
 
+      {/* Radius filter: center (lat/lng or picked on the map) + distance in km */}
+      <Group
+        gap="xs"
+        px="xs"
+        py={6}
+        wrap="nowrap"
+        bg={PANEL_BG}
+        style={{ flexShrink: 0, borderBottom: `1px solid ${BORDER}` }}
+      >
+        <NumberInput
+          size="xs"
+          w={110}
+          placeholder="Latitude"
+          hideControls
+          decimalScale={6}
+          value={radius.lat}
+          onChange={(v) => setRadius({ lat: typeof v === 'number' ? v : '' })}
+        />
+        <NumberInput
+          size="xs"
+          w={110}
+          placeholder="Longitude"
+          hideControls
+          decimalScale={6}
+          value={radius.lng}
+          onChange={(v) => setRadius({ lng: typeof v === 'number' ? v : '' })}
+        />
+        <NumberInput
+          size="xs"
+          w={100}
+          placeholder="Radius"
+          rightSection="km"
+          rightSectionWidth={28}
+          min={MIN_RADIUS_KM}
+          clampBehavior="blur"
+          allowNegative={false}
+          hideControls
+          decimalScale={2}
+          value={radius.km}
+          onChange={(v) => setRadius({ km: typeof v === 'number' ? v : '' })}
+        />
+        <Button
+          size="xs"
+          variant={pickingCenter ? 'filled' : 'default'}
+          c={pickingCenter ? undefined : NAVY}
+          leftSection={<IconCurrentLocation size={14} />}
+          onClick={() => setPickingCenter(!pickingCenter)}
+        >
+          {pickingCenter ? 'Click the map…' : 'Pick on map'}
+        </Button>
+        {radiusTouched && (
+          <ActionIcon
+            size="sm"
+            variant="subtle"
+            color="gray"
+            aria-label="Clear radius"
+            onClick={() => {
+              setRadius(emptyRadius);
+              setPickingCenter(false);
+            }}
+          >
+            <IconX size={14} />
+          </ActionIcon>
+        )}
+      </Group>
+
       {/* Table area: its height decides how many rows fit */}
       <Box ref={ref} pos="relative" style={{ flex: 1, minHeight: 0 }}>
         <Box pos="absolute" inset={0}>
@@ -332,7 +491,7 @@ export default function DataTablePOI() {
             fz="xs"
             verticalAlign="top"
             idAccessor="rowKey"
-            storeColumnsKey="poi-table-columns-v3"
+            storeColumnsKey="poi-table-columns-v4"
             defaultColumnProps={{
               noWrap: true,
               sortable: true,

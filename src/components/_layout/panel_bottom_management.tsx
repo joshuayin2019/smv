@@ -6,6 +6,8 @@ import { useGlobalStore } from '@/stores/global_stores';
 import PoiLayer from '../pages/poi/map_poi';
 import PoiPanel from '../pages/poi/panel_poi';
 import { PoiHideTab } from '../pages/poi/panel_poi';
+import PoiRadius from '../pages/poi/radius_poi';
+
 
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
@@ -91,7 +93,12 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
         <Splitter.Pane defaultSize={100} min={0} style={paneStyle}>
           <Box ref={mapPaneRef} pos="relative" h="100%" w="100%" style={{ overflow: 'hidden' }}>
             <Map active={showMap} />
+
+            {/* POI */}
             <PoiLayer mapPaneRef={mapPaneRef} />
+            <PoiRadius />
+
+            
           </Box>
         </Splitter.Pane>
 
