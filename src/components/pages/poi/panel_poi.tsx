@@ -8,8 +8,9 @@ import {
   IconLayoutSidebarLeftExpand,
 } from '@tabler/icons-react';
 import type { UseSplitterReturnValue } from '@mantine/hooks';
-import DataTablePOI from './datatable_poi';
 
+import { ACCENT, BORDER, NAVY, NAVY_DEEP, PANEL_BG } from '@/lib/theme_colors';
+import DataTablePOI from './datatable_poi';
 
 type PoiPanelProps = {
   onNormal: () => void;
@@ -31,7 +32,7 @@ export default function PoiPanel({ onNormal, onFull, onHide }: PoiPanelProps) {
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        borderTop: '0.5px solid var(--mantine-color-gray-3)',
+        borderTop: `3px solid ${ACCENT}`, // same green accent as the active navbar item
       }}
     >
       {/* Header bar */}
@@ -39,14 +40,10 @@ export default function PoiPanel({ onNormal, onFull, onHide }: PoiPanelProps) {
         justify="space-between"
         wrap="nowrap"
         px="xs"
-        h={32}
-        bg="gray.0"
-        style={{
-          flexShrink: 0,
-          borderBottom: '0.5px solid var(--mantine-color-gray-3)',
-        }}
+        h={34}
+        style={{ flexShrink: 0, background: NAVY_DEEP }}
       >
-        <Text fz={16} fw={700} c="dark">
+        <Text fz={14} fw={700} c="#fff">
           Point of Interest
         </Text>
 
@@ -55,7 +52,7 @@ export default function PoiPanel({ onNormal, onFull, onHide }: PoiPanelProps) {
           <Tooltip label={summaryCollapsed ? 'Show summary tab' : 'Hide summary tab'}>
             <ActionIcon
               variant="transparent"
-              color="gray"
+              color="#fff"
               onClick={() => splitterRef.current?.toggleCollapse(0)}
               aria-label={summaryCollapsed ? 'Show summary tab' : 'Hide summary tab'}
             >
@@ -69,21 +66,21 @@ export default function PoiPanel({ onNormal, onFull, onHide }: PoiPanelProps) {
 
           {/* 40% */}
           <Tooltip label="Resize to 40%">
-            <ActionIcon variant="transparent" color="gray" onClick={onNormal}>
+            <ActionIcon variant="transparent" color="#fff" onClick={onNormal}>
               <IconMinimize size={19} />
             </ActionIcon>
           </Tooltip>
 
           {/* 100% */}
           <Tooltip label="Resize to 100%">
-            <ActionIcon variant="transparent" color="gray" onClick={onFull}>
+            <ActionIcon variant="transparent" color="#fff" onClick={onFull}>
               <IconMaximize size={19} />
             </ActionIcon>
           </Tooltip>
 
           {/* Hide */}
           <Tooltip label="Hide Tab">
-            <ActionIcon variant="transparent" color="gray" onClick={onHide}>
+            <ActionIcon variant="transparent" color="#fff" onClick={onHide}>
               <IconBrowserMinus size={19} />
             </ActionIcon>
           </Tooltip>
@@ -95,14 +92,22 @@ export default function PoiPanel({ onNormal, onFull, onHide }: PoiPanelProps) {
         <Splitter
           splitterRef={splitterRef}
           h="100%"
+          handleColor={BORDER}
           onCollapseChange={(panelIndex, collapsed) => {
             if (panelIndex === 0) setSummaryCollapsed(collapsed);
           }}
         >
-          <Splitter.Pane defaultSize={30} min={20} collapsible >
+          <Splitter.Pane
+            defaultSize={40}
+            min={20}
+            collapsible
+            bg={PANEL_BG}
+            style={{ color: NAVY }}
+          >
             Collapsible sidebar
           </Splitter.Pane>
-          <Splitter.Pane defaultSize={70} min={30} bd="1px solid gray.4">
+
+          <Splitter.Pane defaultSize={60} min={30} bd={`1px solid ${BORDER}`}>
             <DataTablePOI />
           </Splitter.Pane>
         </Splitter>
@@ -123,17 +128,16 @@ export function PoiHideTab({ onShow }: PoiHideTabProps) {
       px="xs"
       h={36}
       w={260}
-      bg="#0a1f6b"
       onClick={onShow}
       style={{
+        background: NAVY,
         position: 'absolute',
         left: '50%',
         transform: 'translateX(-50%)', // centers the tab horizontally
         bottom: 0,
         zIndex: 900,
         cursor: 'pointer',
-        border: '0.5px solid var(--mantine-color-gray-4)',
-        borderBottom: 'none',
+        borderTop: `3px solid ${ACCENT}`,
         borderTopLeftRadius: 8,
         borderTopRightRadius: 8,
         boxShadow: '0 -2px 8px rgba(0, 0, 0, 0.15)',

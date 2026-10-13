@@ -13,25 +13,32 @@ import { useDebouncedValue, useElementSize, useLocalStorage } from '@mantine/hoo
 import { IconColumns3, IconSearch, IconX } from '@tabler/icons-react';
 import { DataTable, type DataTableColumn, type DataTableSortStatus } from 'mantine-datatable';
 import { usePoiStore, emptyPoi, type PoiFeature } from '@/stores/poi_stores';
+import { BORDER, HEADER_BG, HOVER_BG, NAVY, PANEL_BG } from '@/lib/theme_colors';
 
-type PoiRow = PoiFeature['properties'];
+// Properties from the feature plus a guaranteed-unique key
+type PoiRow = PoiFeature['properties'] & { rowKey: string };
 
 // Measured from the rendered table (fz="xs"); tweak if a little blank space remains
 const ROW_HEIGHT = 30.5;
 const HEADER_HEIGHT = 31;
 const FOOTER_HEIGHT = 42;
 
-// All columns the user can show/hide
-const COLUMN_DEFS: { accessor: keyof PoiRow; title: string; textAlign?: 'left' | 'right' }[] = [
-  { accessor: 'name', title: 'Name' },
-  { accessor: 'category', title: 'Category' },
-  { accessor: 'barangay', title: 'Barangay' },
-  { accessor: 'city_municipality', title: 'City / Municipality' },
-  { accessor: 'province', title: 'Province' },
-  { accessor: 'district', title: 'District' },
-  { accessor: 'rd_name', title: 'Road' },
-  { accessor: 'ft_traffic', title: 'Foot Traffic', textAlign: 'right' },
-  { accessor: 'as_of', title: 'As Of' },
+// All columns the user can show/hide, with a fixed width in px
+const COLUMN_DEFS: {
+  accessor: keyof PoiRow;
+  title: string;
+  width: number;
+  textAlign?: 'left' | 'right';
+}[] = [
+  { accessor: 'name', title: 'Name', width: 240 },
+  { accessor: 'category', title: 'Category', width: 160 },
+  { accessor: 'barangay', title: 'Barangay', width: 160 },
+  { accessor: 'city_municipality', title: 'City / Municipality', width: 190 },
+  { accessor: 'province', title: 'Province', width: 260 },
+  { accessor: 'district', title: 'District', width: 120 },
+  { accessor: 'rd_name', title: 'Road', width: 160 },
+  { accessor: 'ft_traffic', title: 'Foot Traffic', width: 120, textAlign: 'right' },
+  { accessor: 'as_of', title: 'As Of', width: 100 },
 ];
 const ALL_ACCESSORS = COLUMN_DEFS.map((c) => c.accessor as string);
 
@@ -108,7 +115,11 @@ export default function DataTablePOI() {
 
   // ----- Data pipeline: rows -> filter -> search -> sort -> page -------------
   const rows: PoiRow[] = useMemo(
-    () => deferred.poi.features.map((f) => f.properties),
+    () =>
+      deferred.poi.features.map((f, i) => ({
+        ...f.properties,
+        rowKey: `${f.id ?? f.properties.fid}-${i}`, // index keeps it unique even if ids repeat
+      })),
     [deferred.poi]
   );
 
@@ -177,6 +188,7 @@ export default function DataTablePOI() {
         const col: DataTableColumn<PoiRow> = {
           accessor: def.accessor,
           title: def.title,
+          width: def.width,
           textAlign: def.textAlign,
           hidden: !visible.includes(def.accessor as string),
         };
@@ -219,10 +231,27 @@ export default function DataTablePOI() {
     [visible, categoryFilter, cityFilter, categoryOptions, cityOptions]
   );
 
+  // Total width of the columns that are currently shown
+  const totalWidth = useMemo(
+    () =>
+      COLUMN_DEFS.filter((c) => visible.includes(c.accessor as string)).reduce(
+        (sum, c) => sum + c.width,
+        0
+      ),
+    [visible]
+  );
+
   return (
     <Box h="100%" w="100%" style={{ display: 'flex', flexDirection: 'column' }}>
       {/* Toolbar: search + column picker */}
-      <Group gap="xs" px="xs" py={6} wrap="nowrap" style={{ flexShrink: 0 }} justify="space-between">
+      <Group
+        gap="xs"
+        px="xs"
+        py={6}
+        wrap="nowrap"
+        bg={PANEL_BG}
+        style={{ flexShrink: 0, borderBottom: `1px solid ${BORDER}` }}
+      >
         <TextInput
           size="xs"
           placeholder="Search name, category, barangay, city..."
@@ -241,7 +270,7 @@ export default function DataTablePOI() {
 
         <Menu shadow="md" position="bottom-end" closeOnItemClick={false}>
           <Menu.Target>
-            <Button size="xs" variant="default" leftSection={<IconColumns3 size={14} />}>
+            <Button size="xs" variant="default" c={NAVY} leftSection={<IconColumns3 size={14} />}>
               Columns
             </Button>
           </Menu.Target>
@@ -275,21 +304,34 @@ export default function DataTablePOI() {
             withTableBorder
             withColumnBorders
             striped
-            stripedColor="gray.2"
+            stripedColor={PANEL_BG}
             highlightOnHover
+            highlightOnHoverColor={HOVER_BG}
+            borderColor={BORDER}
+            rowBorderColor={BORDER}
+            paginationActiveBackgroundColor={NAVY}
+            paginationActiveTextColor="#fff"
             fz="xs"
             verticalAlign="top"
-            idAccessor="id"
-            storeColumnsKey="poi-table-columns" // saves column order and widths
+            idAccessor="rowKey"
+            storeColumnsKey="poi-table-columns-v2"
             defaultColumnProps={{
               noWrap: true,
               sortable: true,
               draggable: true,
-              resizable: true,
+            }}
+            styles={{
+              table: {
+                tableLayout: 'fixed',
+                width: totalWidth, // wider than the panel -> horizontal scrollbar appears
+                minWidth: '100%', // narrower than the panel -> stretch, no blank strip
+              },
+              header: { backgroundColor: HEADER_BG, color: NAVY },
+              pagination: { backgroundColor: PANEL_BG },
             }}
             columns={columns}
             records={records}
-            fetching={processing} // loader while the data is being processed
+            fetching={processing}
             sortStatus={sortStatus}
             onSortStatusChange={setSortStatus}
             totalRecords={sortedRows.length}
@@ -297,10 +339,6 @@ export default function DataTablePOI() {
             page={page}
             onPageChange={(p) => setOffset((p - 1) * pageSize)}
             noRecordsText="No points of interest found"
-            styles={{
-              table: { minWidth: '100%' },
-              //table: { width: '100%', minWidth: '100%' },
-            }}
           />
         </Box>
       </Box>
