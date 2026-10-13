@@ -19,6 +19,7 @@ import {
   emptyRadius,
   MIN_RADIUS_KM,
   type PoiFeature,
+  type PoiProperties,
 } from '@/stores/poi_stores';
 import { BORDER, HEADER_BG, HOVER_BG, NAVY, PANEL_BG } from '@/lib/theme_colors';
 
@@ -28,6 +29,7 @@ type PoiRow = PoiFeature['properties'] & {
   lng: number | null;
   lat: number | null;
   distance_km: number | null; // only filled while a radius filter is active
+  source: PoiProperties; // the original record (same object as in the store), used for row click / selection
 };
 
 // A radius filter that is fully filled in (center + distance)
@@ -40,6 +42,9 @@ const FOOTER_HEIGHT = 42;
 
 const DISTANCE_COL_WIDTH = 120;
 
+// Background of the selected row
+const SELECTED_BG = 'var(--mantine-color-blue-1)';
+
 // All columns the user can show/hide, with a fixed width in px
 const COLUMN_DEFS: {
   accessor: keyof PoiRow;
@@ -47,6 +52,7 @@ const COLUMN_DEFS: {
   width: number;
   textAlign?: 'left' | 'right';
 }[] = [
+  { accessor: 'id', title: 'ID', width: 90, textAlign: 'right' },
   { accessor: 'name', title: 'Name', width: 240 },
   { accessor: 'category', title: 'Category', width: 160 },
   { accessor: 'barangay', title: 'Barangay', width: 160 },
@@ -75,6 +81,7 @@ const EMPTY_FILTERS: Filters = {
 
 // Fields the global search looks at
 const SEARCH_FIELDS: (keyof PoiRow)[] = [
+  'id',
   'name',
   'category',
   'barangay',
@@ -126,6 +133,9 @@ function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
 export default function DataTablePOI() {
   const poi = usePoiStore((s) => s.poi);
   const setFilteredPoi = usePoiStore((s) => s.setFilteredPoi);
+  const setSelectedPoi = usePoiStore((s) => s.setSelectedPoi);
+  // record shown in the details window (clicked in the table or on the map); compared by identity
+  const selectedProps = usePoiStore((s) => s.selectedPoi?.properties);
 
   // Radius filter state lives in the store so the map can draw the circle / pick the center
   const radius = usePoiStore((s) => s.radius);
@@ -158,9 +168,9 @@ export default function DataTablePOI() {
   const radiusTouched = radius.lat !== '' || radius.lng !== '' || radius.km !== MIN_RADIUS_KM;
 
   // Which columns are displayed (remembered between visits)
-  // Key was bumped to -v2 so the new Region column shows up for existing users
+  // Key was bumped to -v3 so the new ID column shows up for existing users
   const [visible, setVisible] = useLocalStorage<string[]>({
-    key: 'poi-visible-columns-v2',
+    key: 'poi-visible-columns-v3',
     defaultValue: ALL_ACCESSORS,
   });
 
@@ -193,6 +203,7 @@ export default function DataTablePOI() {
           lng: c?.[0] ?? null,
           lat: c?.[1] ?? null,
           distance_km: null,
+          source: f.properties,
         };
       }),
     [deferred.poi]
@@ -351,6 +362,13 @@ export default function DataTablePOI() {
     [visible, deferred.radius]
   );
 
+  // Clicking a row opens the floating details window (same one the map uses)
+  const handleRowClick = (row: PoiRow) => {
+    if (row.lng == null || row.lat == null) return; // no point geometry -> nothing to show
+    // the row carries its own original record, so no lookup (fid is not unique in the data)
+    setSelectedPoi({ properties: row.source, lng: row.lng, lat: row.lat });
+  };
+
   return (
     <Box h="100%" w="100%" style={{ display: 'flex', flexDirection: 'column' }}>
       {/* Toolbar: search + column picker */}
@@ -491,7 +509,7 @@ export default function DataTablePOI() {
             fz="xs"
             verticalAlign="top"
             idAccessor="rowKey"
-            storeColumnsKey="poi-table-columns-v4"
+            storeColumnsKey="poi-table-columns-v5"
             defaultColumnProps={{
               noWrap: true,
               sortable: true,
@@ -515,6 +533,14 @@ export default function DataTablePOI() {
             recordsPerPage={pageSize}
             page={page}
             onPageChange={(p) => setOffset((p - 1) * pageSize)}
+            onRowClick={({ record }) => handleRowClick(record)}
+            rowStyle={(record) => ({
+              cursor: 'pointer',
+              // selected row stays highlighted while its details window is open
+              ...(selectedProps && record.source === selectedProps
+                ? { backgroundColor: SELECTED_BG }
+                : {}),
+            })}
             noRecordsText="No points of interest found"
           />
         </Box>

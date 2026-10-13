@@ -36,6 +36,9 @@ export type PoiCollection = {
 
 export const emptyPoi: PoiCollection = { type: "FeatureCollection", features: [] };
 
+// The POI clicked on the map (shown in the floating details window)
+export type PoiSelection = { properties: PoiProperties; lng: number; lat: number };
+
 // Radius filter inputs. "" = not filled in yet.
 // km defaults to (and never goes below) MIN_RADIUS_KM, so picking a center is enough to start filtering.
 export const MIN_RADIUS_KM = 1;
@@ -50,6 +53,9 @@ type PoiState = {
     radius: PoiRadius;
     // true while the next map click should set the radius center
     pickingCenter: boolean;
+    // POI clicked on the map (null = details window closed)
+    selectedPoi: PoiSelection | null;
+    setSelectedPoi: (p: PoiSelection | null) => void;
     setPoi: (poi: PoiCollection) => void;
     setFilteredPoi: (rows: PoiProperties[] | null) => void;
     setRadius: (r: Partial<PoiRadius>) => void;
@@ -62,10 +68,18 @@ export const usePoiStore = create<PoiState>((set) => ({
     filteredPoi: null,
     radius: emptyRadius,
     pickingCenter: false,
-    setPoi: (poi) => set({ poi }),
+    selectedPoi: null,
+    setSelectedPoi: (selectedPoi) => set({ selectedPoi }),
+    setPoi: (poi) => set({ poi, selectedPoi: null }),
     setFilteredPoi: (filteredPoi) => set({ filteredPoi }),
     setRadius: (r) => set((s) => ({ radius: { ...s.radius, ...r } })),
     setPickingCenter: (pickingCenter) => set({ pickingCenter }),
     clearPoi: () =>
-        set({ poi: emptyPoi, filteredPoi: null, radius: emptyRadius, pickingCenter: false }),
+        set({
+            poi: emptyPoi,
+            filteredPoi: null,
+            radius: emptyRadius,
+            pickingCenter: false,
+            selectedPoi: null,
+        }),
 }));

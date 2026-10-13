@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useRef, type RefObject } from "react";
 import * as maplibregl from "maplibre-gl";
 import { useMapStore } from "@/stores/map_stores";
-import { usePoiStore, PoiCollection } from "@/stores/poi_stores";
+import { usePoiStore, PoiCollection, type PoiProperties } from "@/stores/poi_stores";
 import { useGlobalStore } from "@/stores/global_stores";
+import PoiDetailsWindow from "./poi_details_window";
 
 
 const POI_PAGE = "Point of Interest"; // activePage value of the POI navbar item
@@ -34,6 +35,8 @@ const LEVELS = [
 const POINTS_MINZOOM = 16; // individual POIs appear from here (right after the last group level)
 const POINTS_MAXZOOM = 18; // zoom cap when clicking the last group level (bgy -> individual POIs)
 const ZOOM_EPS = 0.01; // keeps the target strictly inside the next level's [minzoom, maxzoom)
+const SELECT_ZOOM = 17; // minimum zoom when a POI is selected (table row or map click); individual POIs show from 16
+const SELECT_FLY_MS = 800; // duration of the fly-to animation
 const GROUP_FONT = ["Montserrat Medium"]; // must exist in the basemap style's glyph server
 
 const EXTENT_PADDING = 60; // px of breathing room around the data when zooming to its extent
@@ -179,6 +182,7 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
   const activePage = useGlobalStore((s) => s.activePage);
   const map = useMapStore((s) => s.map);
   const poi = usePoiStore((s) => s.poi);
+  const selectedPoi = usePoiStore((s) => s.selectedPoi);
 
   // recomputed only when the POI data changes
   const groups = useMemo(() => buildGroups(poi), [poi]);
@@ -330,11 +334,15 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
         const feature = e.features?.[0];
         if (!feature || feature.geometry.type !== "Point") return;
 
-        const props = feature.properties ?? {};
         const [lng, lat] = feature.geometry.coordinates as [number, number];
 
-        console.log({ props, lng, lat });
-        alert(`You click the poi data kindly see the console log for more info`);
+        // Use the original record from the store (the map's copy can lose null values / change types)
+        // look it up by id (fid is not unique in the data)
+        const poiId = (feature.properties as { id?: number } | null)?.id;
+        const full = usePoiStore.getState().poi.features.find((f) => f.properties.id === poiId);
+        const properties = full?.properties ?? (feature.properties as unknown as PoiProperties);
+
+        usePoiStore.getState().setSelectedPoi({ properties, lng, lat });
       } catch (err) {
         console.error("POI click failed:", err instanceof Error ? err.message : err);
       }
@@ -448,5 +456,24 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
     Promise.all(pending.map((id) => loadCategoryIcon(map, id).catch(() => false)));
   }, [map, poi]);
 
-  return null;
+  // zoom to the selected POI, whether it was picked in the table or clicked on the map.
+  // A new selection object is created on every click, so clicking the same POI again re-centers it.
+  useEffect(() => {
+    if (!map || !selectedPoi || activePageRef.current !== POI_PAGE) return;
+
+    map.resize(); // make sure the canvas matches its container before measuring
+    const hidden = hiddenHeight(map, mapPaneRef?.current); // strip hidden behind the bottom panel
+
+    map.easeTo({
+      center: [selectedPoi.lng, selectedPoi.lat],
+      // never zoom OUT if the user is already closer than SELECT_ZOOM
+      zoom: Math.max(map.getZoom(), SELECT_ZOOM),
+      // shift up by half the hidden strip so the POI lands in the middle of the VISIBLE map
+      offset: [0, -hidden / 2],
+      duration: SELECT_FLY_MS,
+    });
+  }, [map, selectedPoi, mapPaneRef]);
+
+  // the details window floats above the map (rendered in a portal), so it can live here
+  return <PoiDetailsWindow />;
 }
