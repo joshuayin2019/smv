@@ -50,13 +50,12 @@ type SearchMode = 'poi' | 'api' | 'all';
 type Suggestion = Place & { source: 'poi' | 'api' };
 type PickTarget = 'from' | 'to';
 
+const MENU_Z_INDEX = 10000;
 const MODE_LABEL: Record<SearchMode, string> = {
   poi: 'POI data',
   api: 'Route service',
   all: 'Both',
 };
-
-const MENU_Z_INDEX = 10000;
 
 interface Props {
   /** The clicked POI. Used as the default destination ("To"), which the user can change. */
@@ -707,7 +706,6 @@ export default function PoiRouting({ destination }: Props) {
 
       {/* Turn-by-turn */}
       {current && current.steps.length > 0 ? (
-        <ScrollArea.Autosize mah={220}>
           <Stack gap={0}>
             {current.steps.map((s, i) => (
               <Group
@@ -730,7 +728,6 @@ export default function PoiRouting({ destination }: Props) {
               </Group>
             ))}
           </Stack>
-        </ScrollArea.Autosize>
       ) : (
         <Box p="sm" style={{ border: `1px dashed ${BORDER}`, borderRadius: 6, textAlign: 'center' }}>
           <Text fz={12} c="dimmed">

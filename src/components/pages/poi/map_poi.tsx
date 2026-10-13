@@ -421,7 +421,7 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
 
         usePoiStore.getState().setSelectedPoi({ properties, lng, lat });
       } catch (err) {
-        console.error("POI click failed:", err instanceof Error ? err.message : err);
+        console.warn("POI click failed:", err instanceof Error ? err.message : err);
       }
     };
 

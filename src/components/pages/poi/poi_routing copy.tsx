@@ -19,6 +19,7 @@ import {
 } from '@mantine/core';
 import {
   IconAlertCircle,
+  IconArrowsUpDown,
   IconBike,
   IconCar,
   IconCheck,
@@ -47,12 +48,15 @@ import {
 // ---------------------------------------------------------------------------
 type SearchMode = 'poi' | 'api' | 'all';
 type Suggestion = Place & { source: 'poi' | 'api' };
+type PickTarget = 'from' | 'to';
 
 const MODE_LABEL: Record<SearchMode, string> = {
-  poi: 'POI only',
-  api: 'OpenRoute API',
-  all: 'All',
+  poi: 'POI data',
+  api: 'Route service',
+  all: 'Both',
 };
+
+const MENU_Z_INDEX = 10000;
 
 interface Props {
   /** The clicked POI. Used as the default destination ("To"), which the user can change. */
@@ -147,7 +151,14 @@ function SourceMenu({
   );
 
   return (
-    <Menu position="bottom-end" withinPortal>
+    <Menu
+      position="bottom-end"
+      withinPortal
+      zIndex={MENU_Z_INDEX}
+      shadow="md"
+      width={170}
+      closeOnItemClick
+    >
       <Menu.Target>
         <ActionIcon
           size="sm"
@@ -231,7 +242,7 @@ function PlaceInput({
       return;
     }
 
-    // "All" -> show POI matches immediately while the API results load
+    // "Both" -> show POI matches immediately while the API results load
     if (searchMode === 'all') {
       setSuggestions(local);
       setShowList(local.length > 0);
@@ -365,7 +376,7 @@ export default function PoiRouting({ destination }: Props) {
   const to = usePoiStore((s) => s.routeTo);
   const routes = usePoiStore((s) => s.routes);
   const selected = usePoiStore((s) => s.selectedRoute);
-  const picking = usePoiStore((s) => s.pickingFrom);
+  const picking = usePoiStore((s) => s.pickingFrom); // true while waiting for a map click (From or To)
   const pickedPoint = usePoiStore((s) => s.pickedPoint);
   const setRouteFrom = usePoiStore((s) => s.setRouteFrom);
   const setRouteTo = usePoiStore((s) => s.setRouteTo);
@@ -387,6 +398,11 @@ export default function PoiRouting({ destination }: Props) {
   const [mode, setMode] = useState<TravelMode>('driving');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // which field the next map click belongs to (local UI state)
+  const [pickTarget, setPickTarget] = useState<PickTarget>('from');
+  // bumped on swap so both inputs remount and re-read their text from the new value
+  const [swapKey, setSwapKey] = useState(0);
 
   const routeAbort = useRef<AbortController | null>(null);
 
@@ -415,9 +431,12 @@ export default function PoiRouting({ destination }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [destination.name, destination.lat, destination.lon]);
 
-  // point picked on the map (map_poi.tsx sets it after the click)
+  // point picked on the map (map_poi.tsx sets it after the click) -> goes to From or To
   useEffect(() => {
-    if (pickedPoint) chooseFrom(pickedPoint);
+    if (!pickedPoint) return;
+    if (pickTarget === 'to') chooseTo(pickedPoint);
+    else chooseFrom(pickedPoint);
+    setPickingFrom(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pickedPoint]);
 
@@ -430,23 +449,47 @@ export default function PoiRouting({ destination }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ----- use my location -----
-  const useMyLocation = () => {
+  // ----- use my location (From or To) -----
+  const useMyLocation = (target: PickTarget) => {
     if (!navigator.geolocation) {
       setError('Geolocation is not supported by this browser.');
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) =>
-        chooseFrom({
+      (pos) => {
+        const place: Place = {
           name: 'My location',
           address: 'Current device location',
           lat: pos.coords.latitude,
           lon: pos.coords.longitude,
-        }),
+        };
+        if (target === 'to') chooseTo(place);
+        else chooseFrom(place);
+      },
       () => setError('Could not get your location. Check browser permissions.'),
       { enableHighAccuracy: true, timeout: 10000 }
     );
+  };
+
+  // ----- pick on map (From or To) -----
+  const togglePick = (target: PickTarget) => {
+    if (picking && pickTarget === target) {
+      setPickingFrom(false); // clicking the active button cancels
+      return;
+    }
+    setPickTarget(target);
+    setPickingFrom(true);
+  };
+
+  // ----- swap From and To -----
+  const swapPlaces = () => {
+    const oldFrom = from;
+    const oldTo = to;
+    setPickingFrom(false);
+    setRouteFrom(oldTo);
+    setRouteTo(oldFrom);
+    setSwapKey((k) => k + 1);
+    clearRoutes();
   };
 
   // ----- get routes -----
@@ -481,82 +524,116 @@ export default function PoiRouting({ destination }: Props) {
 
   const sourceMenu = <SourceMenu mode={searchMode} onChange={setSearchMode} hasPoi={hasPoi} />;
 
+  const myLocationButton = (target: PickTarget) => (
+    <ActionIcon
+      size="sm"
+      variant="subtle"
+      color={NAVY}
+      title="Use my location"
+      aria-label={`Use my location as ${target === 'from' ? 'start point' : 'destination'}`}
+      onClick={() => useMyLocation(target)}
+    >
+      <IconCurrentLocation size={15} />
+    </ActionIcon>
+  );
+
+  const pickOnMapButton = (target: PickTarget) => {
+    const active = picking && pickTarget === target;
+    return (
+      <ActionIcon
+        size="sm"
+        variant={active ? 'filled' : 'subtle'}
+        color={active ? ACCENT : NAVY}
+        title="Pick on map"
+        aria-label={`Pick ${target === 'from' ? 'start point' : 'destination'} on map`}
+        onClick={() => togglePick(target)}
+      >
+        <IconMapPin size={15} />
+      </ActionIcon>
+    );
+  };
+
   return (
     <Stack gap="sm">
-      {/* Start point with search */}
-      <PlaceInput
-        label="From"
-        placeholder="Search a place or pick on the map"
-        value={from}
-        onChange={chooseFrom}
-        near={{ lat: destination.lat, lon: destination.lon }}
-        searchMode={searchMode}
-        poiPlaces={poiPlaces}
-        leftSection={<IconTargetArrow size={14} />}
-        onError={setError}
-        actionCount={3}
-        actions={
-          <>
-            {sourceMenu}
-            <ActionIcon
-              size="sm"
-              variant="subtle"
-              color={NAVY}
-              title="Use my location"
-              aria-label="Use my location"
-              onClick={useMyLocation}
-            >
-              <IconCurrentLocation size={15} />
-            </ActionIcon>
-            <ActionIcon
-              size="sm"
-              variant={picking ? 'filled' : 'subtle'}
-              color={picking ? ACCENT : NAVY}
-              title="Pick on map"
-              aria-label="Pick start point on map"
-              onClick={() => setPickingFrom(!picking)}
-            >
-              <IconMapPin size={15} />
-            </ActionIcon>
-          </>
-        }
-      />
+      {/* From / To with swap button on the right */}
+      <Group gap="xs" wrap="nowrap" align="center">
+        <Stack gap="sm" flex={1} style={{ minWidth: 0 }}>
+          {/* Start point with search */}
+          <PlaceInput
+            key={`from-${swapKey}`}
+            label="From"
+            placeholder="Search a place or pick on the map"
+            value={from}
+            onChange={chooseFrom}
+            near={{ lat: destination.lat, lon: destination.lon }}
+            searchMode={searchMode}
+            poiPlaces={poiPlaces}
+            leftSection={<IconTargetArrow size={14} />}
+            onError={setError}
+            actionCount={3}
+            actions={
+              <>
+                {sourceMenu}
+                {myLocationButton('from')}
+                {pickOnMapButton('from')}
+              </>
+            }
+          />
+
+          {/* Destination: defaults to the clicked POI but can be changed */}
+          <PlaceInput
+            key={`to-${swapKey}`}
+            label="To"
+            placeholder="Search a destination or pick on the map"
+            value={to}
+            onChange={chooseTo}
+            near={{ lat: destination.lat, lon: destination.lon }}
+            searchMode={searchMode}
+            poiPlaces={poiPlaces}
+            leftSection={<IconMapPin size={14} color={ACCENT} />}
+            onError={setError}
+            actionCount={isPoiDestination ? 3 : 4}
+            actions={
+              <>
+                {sourceMenu}
+                {myLocationButton('to')}
+                {pickOnMapButton('to')}
+                {!isPoiDestination && (
+                  <ActionIcon
+                    size="sm"
+                    variant="subtle"
+                    color={NAVY}
+                    title="Reset to selected POI"
+                    aria-label="Reset destination to selected POI"
+                    onClick={() => chooseTo(poiPlace)}
+                  >
+                    <IconTargetArrow size={15} />
+                  </ActionIcon>
+                )}
+              </>
+            }
+          />
+        </Stack>
+
+        <ActionIcon
+          variant="light"
+          color={NAVY}
+          size="md"
+          mt={18}
+          disabled={!from && !to}
+          title="Swap From and To"
+          aria-label="Swap start point and destination"
+          onClick={swapPlaces}
+        >
+          <IconArrowsUpDown size={16} />
+        </ActionIcon>
+      </Group>
+
       {picking && (
         <Text fz={11} c={ACCENT} fw={600} mt={-6}>
-          Click anywhere on the map to set the start point…
+          Click anywhere on the map to set the {pickTarget === 'from' ? 'start point' : 'destination'}…
         </Text>
       )}
-
-      {/* Destination: defaults to the clicked POI but can be changed */}
-      <PlaceInput
-        label="To"
-        placeholder="Search a destination"
-        value={to}
-        onChange={chooseTo}
-        near={{ lat: destination.lat, lon: destination.lon }}
-        searchMode={searchMode}
-        poiPlaces={poiPlaces}
-        leftSection={<IconMapPin size={14} color={ACCENT} />}
-        onError={setError}
-        actionCount={isPoiDestination ? 1 : 2}
-        actions={
-          <>
-            {sourceMenu}
-            {!isPoiDestination && (
-              <ActionIcon
-                size="sm"
-                variant="subtle"
-                color={NAVY}
-                title="Reset to selected POI"
-                aria-label="Reset destination to selected POI"
-                onClick={() => chooseTo(poiPlace)}
-              >
-                <IconTargetArrow size={15} />
-              </ActionIcon>
-            )}
-          </>
-        }
-      />
 
       {/* Travel mode: appears once a start point is chosen */}
       {from && (

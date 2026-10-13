@@ -108,7 +108,7 @@ export async function login(data: {
 
     return { success: true, token, user: toAuth(row) };
   } catch (error) {
-    console.error("login error:", error);
+    console.warn("login error:", error);
     return { success: false, message: "Internal server error", status: 500 };
   }
 }

@@ -26,7 +26,7 @@ import { useGlobalStore } from '@/stores/global_stores';
 import { useMapStore } from '@/stores/map_stores';
 import { usePoiStore, type PoiProperties, type PoiSelection } from '@/stores/poi_stores';
 import { ACCENT, BORDER, NAVY, NAVY_DEEP } from '@/lib/theme_colors';
-import type { RouteResult } from '@/lib/tomtom';
+import type { RouteResult } from '@/lib/openroute';
 import PoiRouting from './poi_routing';
 
 //
@@ -177,7 +177,7 @@ function drawRoutesOnMap(
     }
   } catch (err) {
     // style not ready / being swapped
-    console.error('Route draw failed:', err instanceof Error ? err.message : err);
+    console.warn('Route draw failed:', err instanceof Error ? err.message : err);
   }
 }
 
@@ -375,7 +375,7 @@ export default function PoiDetailsWindow() {
     try {
       sphereRef.current?.exit();
     } catch (err) {
-      console.error('Photosphere exit failed:', err instanceof Error ? err.message : err);
+      console.warn('Photosphere exit failed:', err instanceof Error ? err.message : err);
     }
   };
 
@@ -454,7 +454,7 @@ export default function PoiDetailsWindow() {
 
       sphereRef.current.enter();
     } catch (err) {
-      console.error('Photosphere enter failed:', err instanceof Error ? err.message : err);
+      console.warn('Photosphere enter failed:', err instanceof Error ? err.message : err);
       restore();
     }
   };
@@ -625,7 +625,7 @@ export default function PoiDetailsWindow() {
                 lat: selected.lat,
                 lon: selected.lng, // the store uses `lng`, TomTom helper uses `lon`
               }}
-              onRoutesChange={drawRoutes}
+              //onRoutesChange={drawRoutes}
             />
           )}
         </Box>

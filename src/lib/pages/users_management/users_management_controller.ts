@@ -52,7 +52,7 @@ export async function loadUsers(){
         const res = await conn.query(sql);
         return { success: true, data: res.rows };
     } catch (error) {
-        console.error("users_management_controller:", error);
+        console.warn("users_management_controller:", error);
         return { success: false, message: "Internal server error", status: 500 };
     }
 

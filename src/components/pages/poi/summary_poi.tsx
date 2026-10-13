@@ -121,9 +121,7 @@ export default function SummaryPOI() {
 
       case 'barslist':
         return (
-          <Box h="100%" style={{ overflow: 'auto' }}>
             <RankedBars items={data} />
-          </Box>
         );
 
       case 'donut':

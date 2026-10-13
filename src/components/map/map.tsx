@@ -1,6 +1,9 @@
-// components/map/map.tsx  (basic map only)
+// components/map/map.tsx
 import { useEffect, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
+import type { ErrorEvent } from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+import { Loader, Stack, Text } from "@mantine/core";
 import { useMapStore } from "@/stores/map_stores";
 
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
@@ -9,7 +12,9 @@ export default function Map({ active = true }: { active?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const setMap = useMapStore((s) => s.setMap);
-  const [zoom, setZoom] = useState("5.0"); // matches the initial zoom below
+  const [zoom, setZoom] = useState("5.0");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -18,30 +23,35 @@ export default function Map({ active = true }: { active?: boolean }) {
       style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
       center: [121, 14.6],
       zoom: 5,
-      // Disable the built-in resize handler; we do our own below
       trackResize: false,
     });
     mapRef.current = map;
 
-    // keep the badge in sync; one decimal is enough, and an unchanged string doesn't re-render
     const updateZoom = () => setZoom(map.getZoom().toFixed(1));
     map.on("zoom", updateZoom);
 
-    // share the map only after the style is ready, so layers can be added safely
     map.on("load", () => {
       updateZoom();
       setMap(map);
+      setLoading(false);
     });
+
+    const onError = (e: ErrorEvent) => {
+      if (!map.loaded()) {
+        setError(e.error?.message ?? "Failed to load map");
+        setLoading(false);
+      }
+    };
+    map.on("error", onError);
 
     const el = containerRef.current;
     let raf = 0;
     const ro = new ResizeObserver(() => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        // Skip while hidden (display:none gives 0x0) to avoid blanking the canvas
         if (el.clientWidth === 0 || el.clientHeight === 0) return;
         map.resize();
-        map.redraw(); // synchronous repaint -> no blank frame
+        map.redraw();
       });
     });
     ro.observe(el);
@@ -50,17 +60,61 @@ export default function Map({ active = true }: { active?: boolean }) {
       cancelAnimationFrame(raf);
       ro.disconnect();
       map.off("zoom", updateZoom);
+      map.off("error", onError);
       setMap(null);
       map.remove();
       mapRef.current = null;
     };
   }, [setMap]);
 
+
+
+  // inside Map(), after the main useEffect
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!active || !map) return;
+
+    // wait one frame so the wrapper is back to display:block and has a real size
+    const id = requestAnimationFrame(() => {
+      const el = containerRef.current;
+      if (!el || el.clientWidth === 0 || el.clientHeight === 0) return;
+      map.resize();
+      map.redraw();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [active]);
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
 
-      {/* zoom level badge */}
+      {(loading || error) && (
+        <Stack
+          align="center"
+          justify="center"
+          gap="xs"
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 2,
+            background: "var(--mantine-color-gray-0)",
+          }}
+        >
+          {error ? (
+            <Text size="sm" c="red">
+              Couldn't load the map. {error}
+            </Text>
+          ) : (
+            <>
+              <Loader size="md" />
+              <Text size="sm" c="dimmed">
+                Loading map…
+              </Text>
+            </>
+          )}
+        </Stack>
+      )}
+
       <div
         style={{
           position: "absolute",
@@ -72,7 +126,7 @@ export default function Map({ active = true }: { active?: boolean }) {
           color: "#fff",
           fontSize: 12,
           fontFamily: "monospace",
-          pointerEvents: "none", // never blocks clicks on the map
+          pointerEvents: "none",
           zIndex: 1,
         }}
       >

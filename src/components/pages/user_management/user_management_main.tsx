@@ -204,7 +204,7 @@ export default function UserManagementMain() {
         setUsers(rows.map(normalizeUser));
       } catch (e: any) {
         if (e?.name !== 'AbortError') {
-          console.error('Failed to load users:', e);
+          console.warn('Failed to load users:', e);
           setError(e?.message ?? 'Failed to load users');
         }
       } finally {
