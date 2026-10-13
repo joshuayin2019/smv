@@ -23,7 +23,7 @@ const SELECT_POI = `
         )::json,
         'properties', json_build_object(
             'fid', x.fid,
-            'id', x.fid,
+            'id', x.id,
             'name', x.name,
             'category', z.name,
             'category_id', x.category_id,

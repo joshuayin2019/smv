@@ -99,10 +99,10 @@ export default function PoiPanel({ onNormal, onFull, onHide }: PoiPanelProps) {
             if (panelIndex === 0) setSummaryCollapsed(collapsed);
           }}
         >
-          <Splitter.Pane defaultSize={30} min={20} collapsible bg="blue">
+          <Splitter.Pane defaultSize={30} min={20} collapsible >
             Collapsible sidebar
           </Splitter.Pane>
-          <Splitter.Pane defaultSize={70} min={30} bg="teal">
+          <Splitter.Pane defaultSize={70} min={30} bd="1px solid gray.4">
             <DataTablePOI />
           </Splitter.Pane>
         </Splitter>
