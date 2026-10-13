@@ -35,12 +35,26 @@ const COLUMN_DEFS: {
   { accessor: 'barangay', title: 'Barangay', width: 160 },
   { accessor: 'city_municipality', title: 'City / Municipality', width: 190 },
   { accessor: 'province', title: 'Province', width: 260 },
+  { accessor: 'region', title: 'Region', width: 200 },
   { accessor: 'district', title: 'District', width: 120 },
   { accessor: 'rd_name', title: 'Road', width: 160 },
   { accessor: 'ft_traffic', title: 'Foot Traffic', width: 120, textAlign: 'right' },
   { accessor: 'as_of', title: 'As Of', width: 100 },
 ];
 const ALL_ACCESSORS = COLUMN_DEFS.map((c) => c.accessor as string);
+
+// Columns that get a multi-select filter in the header
+const FILTER_KEYS = ['category', 'region', 'province', 'city_municipality', 'barangay'] as const;
+type FilterKey = (typeof FILTER_KEYS)[number];
+type Filters = Record<FilterKey, string[]>;
+
+const EMPTY_FILTERS: Filters = {
+  category: [],
+  region: [],
+  province: [],
+  city_municipality: [],
+  barangay: [],
+};
 
 // Fields the global search looks at
 const SEARCH_FIELDS: (keyof PoiRow)[] = [
@@ -49,6 +63,7 @@ const SEARCH_FIELDS: (keyof PoiRow)[] = [
   'barangay',
   'city_municipality',
   'province',
+  'region',
   'district',
   'rd_name',
 ];
@@ -59,8 +74,7 @@ const DEFAULT_SORT: DataTableSortStatus<PoiRow> = { columnAccessor: 'name', dire
 type Query = {
   poi: typeof emptyPoi;
   search: string;
-  categoryFilter: string[];
-  cityFilter: string[];
+  filters: Filters;
   sortStatus: DataTableSortStatus<PoiRow>;
 };
 
@@ -68,8 +82,7 @@ type Query = {
 const EMPTY_QUERY: Query = {
   poi: emptyPoi,
   search: '',
-  categoryFilter: [],
-  cityFilter: [],
+  filters: EMPTY_FILTERS,
   sortStatus: DEFAULT_SORT,
 };
 
@@ -85,13 +98,16 @@ export default function DataTablePOI() {
   // ----- UI state (updates instantly) ---------------------------------------
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 250);
-  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
-  const [cityFilter, setCityFilter] = useState<string[]>([]);
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [sortStatus, setSortStatus] = useState<DataTableSortStatus<PoiRow>>(DEFAULT_SORT);
 
+  const setFilter = (key: FilterKey, values: string[]) =>
+    setFilters((cur) => ({ ...cur, [key]: values }));
+
   // Which columns are displayed (remembered between visits)
+  // Key was bumped to -v2 so the new Region column shows up for existing users
   const [visible, setVisible] = useLocalStorage<string[]>({
-    key: 'poi-visible-columns',
+    key: 'poi-visible-columns-v2',
     defaultValue: ALL_ACCESSORS,
   });
 
@@ -107,8 +123,8 @@ export default function DataTablePOI() {
   // ----- Deferred processing -------------------------------------------------
   // `query` is the latest request; `deferred` lags behind while the heavy work runs.
   const query = useMemo<Query>(
-    () => ({ poi, search: debouncedSearch, categoryFilter, cityFilter, sortStatus }),
-    [poi, debouncedSearch, categoryFilter, cityFilter, sortStatus]
+    () => ({ poi, search: debouncedSearch, filters, sortStatus }),
+    [poi, debouncedSearch, filters, sortStatus]
   );
   const deferred = useDeferredValue(query, EMPTY_QUERY);
   const processing = deferred !== query; // true while the table is still catching up
@@ -123,25 +139,31 @@ export default function DataTablePOI() {
     [deferred.poi]
   );
 
-  const categoryOptions = useMemo(() => uniqueSorted(rows.map((r) => r.category)), [rows]);
-  const cityOptions = useMemo(() => uniqueSorted(rows.map((r) => r.city_municipality)), [rows]);
+  // Dropdown options for every filter, built once per data load
+  const filterOptions = useMemo(
+    () =>
+      Object.fromEntries(
+        FILTER_KEYS.map((k) => [k, uniqueSorted(rows.map((r) => r[k] as string | null))])
+      ) as Record<FilterKey, string[]>,
+    [rows]
+  );
 
   const filteredRows = useMemo(() => {
     const q = deferred.search.trim().toLowerCase();
+
+    // Only the filters that are actually in use; Sets make the lookup fast
+    const active = FILTER_KEYS.filter((k) => deferred.filters[k].length > 0).map(
+      (k) => [k, new Set(deferred.filters[k])] as const
+    );
+
     return rows.filter((r) => {
-      if (deferred.categoryFilter.length && !deferred.categoryFilter.includes(r.category)) {
-        return false;
-      }
-      if (
-        deferred.cityFilter.length &&
-        !deferred.cityFilter.includes(r.city_municipality ?? '')
-      ) {
-        return false;
+      for (const [key, values] of active) {
+        if (!values.has(String(r[key] ?? ''))) return false;
       }
       if (!q) return true;
       return SEARCH_FIELDS.some((k) => String(r[k] ?? '').toLowerCase().includes(q));
     });
-  }, [rows, deferred.search, deferred.categoryFilter, deferred.cityFilter]);
+  }, [rows, deferred.search, deferred.filters]);
 
   const sortedRows = useMemo(() => {
     const key = deferred.sortStatus.columnAccessor as keyof PoiRow;
@@ -194,33 +216,19 @@ export default function DataTablePOI() {
         };
 
         // Filter inputs use the instant state so they respond immediately
-        if (def.accessor === 'category') {
-          col.filtering = categoryFilter.length > 0;
+        if ((FILTER_KEYS as readonly string[]).includes(def.accessor as string)) {
+          const key = def.accessor as FilterKey;
+          col.filtering = filters[key].length > 0;
           col.filter = (
             <MultiSelect
-              label="Category"
-              placeholder="Pick categories"
-              data={categoryOptions}
-              value={categoryFilter}
-              onChange={setCategoryFilter}
+              label={def.title}
+              placeholder={`Pick ${def.title.toLowerCase()}`}
+              data={filterOptions[key]}
+              value={filters[key]}
+              onChange={(values) => setFilter(key, values)}
               searchable
               clearable
-              comboboxProps={{ withinPortal: false }}
-            />
-          );
-        }
-
-        if (def.accessor === 'city_municipality') {
-          col.filtering = cityFilter.length > 0;
-          col.filter = (
-            <MultiSelect
-              label="City / Municipality"
-              placeholder="Pick cities"
-              data={cityOptions}
-              value={cityFilter}
-              onChange={setCityFilter}
-              searchable
-              clearable
+              limit={100} // barangay has thousands of options; only render the first matches
               comboboxProps={{ withinPortal: false }}
             />
           );
@@ -228,7 +236,7 @@ export default function DataTablePOI() {
 
         return col;
       }),
-    [visible, categoryFilter, cityFilter, categoryOptions, cityOptions]
+    [visible, filters, filterOptions]
   );
 
   // Total width of the columns that are currently shown
@@ -314,7 +322,7 @@ export default function DataTablePOI() {
             fz="xs"
             verticalAlign="top"
             idAccessor="rowKey"
-            storeColumnsKey="poi-table-columns-v2"
+            storeColumnsKey="poi-table-columns-v3"
             defaultColumnProps={{
               noWrap: true,
               sortable: true,

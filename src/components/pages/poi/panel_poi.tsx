@@ -11,6 +11,7 @@ import type { UseSplitterReturnValue } from '@mantine/hooks';
 
 import { ACCENT, BORDER, NAVY, NAVY_DEEP, PANEL_BG } from '@/lib/theme_colors';
 import DataTablePOI from './datatable_poi';
+import SummaryPOI from './summary_poi';
 
 type PoiPanelProps = {
   onNormal: () => void;
@@ -104,7 +105,7 @@ export default function PoiPanel({ onNormal, onFull, onHide }: PoiPanelProps) {
             bg={PANEL_BG}
             style={{ color: NAVY }}
           >
-            Collapsible sidebar
+            <SummaryPOI />
           </Splitter.Pane>
 
           <Splitter.Pane defaultSize={60} min={30} bd={`1px solid ${BORDER}`}>
