@@ -1,10 +1,12 @@
 // components/map/poi_layer.tsx  (POI points + admin-level clustering)
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type RefObject } from "react";
 import * as maplibregl from "maplibre-gl";
 import { useMapStore } from "@/stores/map_stores";
 import { usePoiStore, PoiCollection } from "@/stores/poi_stores";
 import { useGlobalStore } from "@/stores/global_stores";
 
+
+const POI_PAGE = "Point of Interest"; // activePage value of the POI navbar item
 
 const POI_SOURCE = "poi";
 const GROUP_SOURCE = "poi-groups";
@@ -34,11 +36,23 @@ const POINTS_MAXZOOM = 18; // zoom cap when clicking the last group level (bgy -
 const ZOOM_EPS = 0.01; // keeps the target strictly inside the next level's [minzoom, maxzoom)
 const GROUP_FONT = ["Montserrat Medium"]; // must exist in the basemap style's glyph server
 
+const EXTENT_PADDING = 60; // px of breathing room around the data when zooming to its extent
+const EXTENT_MAXZOOM = 15; // stops a single POI (or a tiny cluster) from zooming in too far
+const PANEL_SETTLE_MS = 400; // longer than the splitter transition (300ms), so the pane has its final size
+const MIN_MAP_HEIGHT = 80; // px; below this the visible map is practically hidden (e.g. panel at 100%)
+
 // zoom range of the level that comes after LEVELS[index]
 // (all -> reg -> pro -> mun -> bgy -> individual POIs)
 function nextLevelRange(index: number): { min: number; max: number } {
   const next = LEVELS[index + 1];
   return next ? { min: next.minzoom, max: next.maxzoom } : { min: POINTS_MINZOOM, max: POINTS_MAXZOOM };
+}
+
+// Height (px) of the map canvas that sticks out below the visible pane, i.e. the part hidden
+// behind the bottom panel. 0 when the canvas already matches the pane.
+function hiddenHeight(map: maplibregl.Map, pane: HTMLElement | null | undefined): number {
+  if (!pane) return 0;
+  return Math.max(0, map.getContainer().clientHeight - pane.clientHeight);
 }
 
 type Group = {
@@ -103,6 +117,16 @@ function buildGroups(poi: PoiCollection): GeoJSONData {
   return { type: "FeatureCollection", features } as unknown as GeoJSONData;
 }
 
+// bounding box of every POI point (empty bounds when there are no points)
+function getPoiBounds(poi: PoiCollection): maplibregl.LngLatBounds {
+  const bounds = new maplibregl.LngLatBounds();
+  for (const f of poi.features) {
+    if (f.geometry.type !== "Point") continue;
+    bounds.extend(f.geometry.coordinates as [number, number]);
+  }
+  return bounds;
+}
+
 // distinct category_id values present in the POI data
 function collectCategoryIds(poi: PoiCollection): string[] {
   const ids = new Set<string>();
@@ -145,7 +169,13 @@ async function loadCategoryIcon(map: maplibregl.Map, id: string): Promise<boolea
   return true;
 }
 
-export default function PoiLayer() {
+type PoiLayerProps = {
+  // The element that shows the map (the top splitter pane). Its height is the visible map height;
+  // anything the canvas has beyond that is hidden behind the bottom panel.
+  mapPaneRef?: RefObject<HTMLElement | null>;
+};
+
+export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
   const activePage = useGlobalStore((s) => s.activePage);
   const map = useMapStore((s) => s.map);
   const poi = usePoiStore((s) => s.poi);
@@ -161,6 +191,62 @@ export default function PoiLayer() {
   useEffect(() => {
     activePageRef.current = activePage;
   }, [activePage]);
+
+  // Keep the map canvas the same size as its container (and the pane) whenever they change
+  useEffect(() => {
+    if (!map) return;
+
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => map.resize());
+    });
+    observer.observe(map.getContainer());
+    if (mapPaneRef?.current) observer.observe(mapPaneRef.current);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [map, mapPaneRef]);
+
+  // true from the moment the POI page is opened until the map has zoomed to the data
+  const zoomPending = useRef(false);
+
+  // opening the POI page asks for a zoom to the data extent
+  useEffect(() => {
+    if (activePage === POI_PAGE) zoomPending.current = true;
+  }, [activePage]);
+
+  // zoom to the extent of the POI data, fitted into the part of the map that is actually visible
+  useEffect(() => {
+    if (!map || activePage !== POI_PAGE || !zoomPending.current) return;
+    if (poi.features.length === 0) return; // data not loaded yet; runs again when it arrives
+
+    // wait for the splitter transition to finish so the pane has its final height
+    const timer = window.setTimeout(() => {
+      if (!zoomPending.current) return;
+
+      map.resize();
+      const hidden = hiddenHeight(map, mapPaneRef?.current);
+      const visible = map.getContainer().clientHeight - hidden;
+      if (visible < MIN_MAP_HEIGHT) return; // map is (almost) hidden, e.g. panel at 100%
+
+      const bounds = getPoiBounds(poi);
+      if (bounds.isEmpty()) return;
+
+      const pad = Math.min(EXTENT_PADDING, visible / 4); // never larger than the map can take
+      zoomPending.current = false;
+      map.fitBounds(bounds, {
+        // extra bottom padding = the strip of the canvas hidden behind the panel
+        padding: { top: pad, left: pad, right: pad, bottom: pad + hidden },
+        maxZoom: EXTENT_MAXZOOM,
+        duration: 800,
+      });
+    }, PANEL_SETTLE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [map, activePage, poi, mapPaneRef]);
 
   // add sources, layers, and handlers once the map is ready
   useEffect(() => {
@@ -238,7 +324,7 @@ export default function PoiLayer() {
     // click a POI -> popup with its details
     const onPoiClick = (e: maplibregl.MapLayerMouseEvent) => {
       try {
-        if (activePageRef.current !== "Point of Interest") return;
+        if (activePageRef.current !== POI_PAGE) return;
 
         const feature = e.features?.[0];
         if (!feature || feature.geometry.type !== "Point") return;
@@ -269,8 +355,14 @@ export default function PoiLayer() {
         const p = feature.properties as { minLng: number; minLat: number; maxLng: number; maxLat: number };
         const [lng, lat] = feature.geometry.coordinates as [number, number];
 
+        map.resize(); // make sure the canvas matches its container before measuring
+        const hidden = hiddenHeight(map, mapPaneRef?.current); // strip hidden behind the bottom panel
+
         const bounds = new maplibregl.LngLatBounds([p.minLng, p.minLat], [p.maxLng, p.maxLat]);
-        const cam = map.cameraForBounds(bounds, { padding: 80 });
+        // fit into the visible part only: the hidden strip counts as extra bottom padding
+        const cam = map.cameraForBounds(bounds, {
+          padding: { top: 80, left: 80, right: 80, bottom: 80 + hidden },
+        });
 
         // Fit the group's bounds, but keep the zoom inside the next level's range:
         //  - too far out -> raised to the next level's minzoom (so it never stays on the same level)
@@ -282,16 +374,20 @@ export default function PoiLayer() {
         const clamped = fitZoom < minZoom || fitZoom > maxZoom;
 
         // The marker sits at the average of its POIs, not at the middle of the bounding box.
-        //  - zoom not clamped -> the whole group fits, so centre on the bounds (group fully visible)
-        //  - zoom clamped     -> the bounds no longer fit anyway, so centre on the clicked marker
-        //                        (otherwise it jumps away from where you clicked, often to the right)
+        //  - zoom not clamped -> the whole group fits, so centre on the bounds (group fully visible);
+        //                        cam.center already accounts for the hidden strip
+        //  - zoom clamped     -> the bounds no longer fit anyway, so centre on the clicked marker,
+        //                        shifted up by half the hidden strip so it lands in the middle of
+        //                        the VISIBLE map instead of the middle of the full canvas
         let center: [number, number] = [lng, lat];
+        let offset: [number, number] = [0, -hidden / 2];
         if (!clamped && cam?.center) {
           const resolvedCenter = maplibregl.LngLat.convert(cam.center);
           center = [resolvedCenter.lng, resolvedCenter.lat];
+          offset = [0, 0];
         }
 
-        map.easeTo({ center, zoom });
+        map.easeTo({ center, zoom, offset });
       };
 
       map.on("click", layerId, onGroupClick);
@@ -328,7 +424,7 @@ export default function PoiLayer() {
         // the map was already removed, so there is nothing left to clean up
       }
     };
-  }, [map]);
+  }, [map, mapPaneRef]);
 
   // push new data into both sources whenever the store changes
   useEffect(() => {

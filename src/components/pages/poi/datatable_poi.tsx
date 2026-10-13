@@ -94,6 +94,7 @@ function uniqueSorted(values: (string | null | undefined)[]) {
 
 export default function DataTablePOI() {
   const poi = usePoiStore((s) => s.poi);
+  const setFilteredPoi = usePoiStore((s) => s.setFilteredPoi);
 
   // ----- UI state (updates instantly) ---------------------------------------
   const [search, setSearch] = useState('');
@@ -164,6 +165,14 @@ export default function DataTablePOI() {
       return SEARCH_FIELDS.some((k) => String(r[k] ?? '').toLowerCase().includes(q));
     });
   }, [rows, deferred.search, deferred.filters]);
+
+  // Share the visible (filtered) rows with the summary chart
+  useEffect(() => {
+    setFilteredPoi(filteredRows);
+  }, [filteredRows, setFilteredPoi]);
+
+  // When the table goes away, let the chart fall back to all POIs
+  useEffect(() => () => setFilteredPoi(null), [setFilteredPoi]);
 
   const sortedRows = useMemo(() => {
     const key = deferred.sortStatus.columnAccessor as keyof PoiRow;
@@ -259,6 +268,7 @@ export default function DataTablePOI() {
         wrap="nowrap"
         bg={PANEL_BG}
         style={{ flexShrink: 0, borderBottom: `1px solid ${BORDER}` }}
+        justify="space-between"
       >
         <TextInput
           size="xs"

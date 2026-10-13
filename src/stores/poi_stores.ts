@@ -27,6 +27,8 @@ export type PoiFeature = {
     };
 };
 
+export type PoiProperties = PoiFeature["properties"];
+
 export type PoiCollection = {
     type: "FeatureCollection";
     features: PoiFeature[];
@@ -36,12 +38,17 @@ export const emptyPoi: PoiCollection = { type: "FeatureCollection", features: []
 
 type PoiState = {
     poi: PoiCollection;
+    // rows currently visible in the table after search/filters (null = table has not reported yet)
+    filteredPoi: PoiProperties[] | null;
     setPoi: (poi: PoiCollection) => void;
+    setFilteredPoi: (rows: PoiProperties[] | null) => void;
     clearPoi: () => void;
 };
 
 export const usePoiStore = create<PoiState>((set) => ({
     poi: emptyPoi,
+    filteredPoi: null,
     setPoi: (poi) => set({ poi }),
-    clearPoi: () => set({ poi: emptyPoi }),
+    setFilteredPoi: (filteredPoi) => set({ filteredPoi }),
+    clearPoi: () => set({ poi: emptyPoi, filteredPoi: null }),
 }));

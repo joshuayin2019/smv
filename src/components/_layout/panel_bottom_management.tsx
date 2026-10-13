@@ -1,4 +1,4 @@
-import { useEffect,useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import dynamic from 'next/dynamic';
 import { Box, Button, Splitter, Title, type SplitterProps } from '@mantine/core';
 import { useGlobalStore } from '@/stores/global_stores';
@@ -16,7 +16,7 @@ const SIZES_HIDDEN: Sizes = [100, 0];
 const SIZES_NORMAL: Sizes = [60, 40];
 const SIZES_FULL: Sizes = [0, 100];
 
-const TRANSITION = 'all 300ms ease';
+const TRANSITION = 'all 300ms ease'; // keep PANEL_SETTLE_MS in the PoiLayer file longer than this
 
 type PanelBottomManagementProps = {
   showMap: boolean;
@@ -29,8 +29,12 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
   const [sizes, setSizes] = useState<Sizes>(SIZES_HIDDEN);
   const [dragging, setDragging] = useState(false);
 
+  // the visible map area (top pane); PoiLayer measures it to know how much of the map is cut off
+  const mapPaneRef = useRef<HTMLDivElement>(null);
+
   // sizes[1] can be a number or a '40%' string, so parse it before comparing
-  const isOpen = Number.parseFloat(String(sizes[1])) > 0;
+  const bottomSize = Number.parseFloat(String(sizes[1])) || 0; // % of the splitter taken by the bottom pane
+  const isOpen = bottomSize > 0;
 
   const showNormal = () => setSizes(SIZES_NORMAL);
   const showFull = () => setSizes(SIZES_FULL);
@@ -85,9 +89,9 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
       >
         {/* Top pane: map (clipped so it can never scroll) */}
         <Splitter.Pane defaultSize={100} min={0} style={paneStyle}>
-          <Box pos="relative" h="100%" w="100%" style={{ overflow: 'hidden' }}>
+          <Box ref={mapPaneRef} pos="relative" h="100%" w="100%" style={{ overflow: 'hidden' }}>
             <Map active={showMap} />
-            <PoiLayer />
+            <PoiLayer mapPaneRef={mapPaneRef} />
           </Box>
         </Splitter.Pane>
 
@@ -97,18 +101,10 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
         </Splitter.Pane>
       </Splitter>
 
-
-
-
       {/* Show the tab only on Point of Interest, and only while the panel is hidden */}
       {activePage === 'Point of Interest' && !isOpen && (
         <PoiHideTab onShow={showNormal} />
       )}
-
-
-
-
-
     </Box>
   );
 }
