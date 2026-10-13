@@ -4,6 +4,7 @@ import * as maplibregl from "maplibre-gl";
 import { useMapStore } from "@/stores/map_stores";
 import { usePoiStore, PoiCollection, type PoiProperties } from "@/stores/poi_stores";
 import { useGlobalStore } from "@/stores/global_stores";
+import { reverseGeocode, type Place } from "@/lib/openroute";
 import PoiDetailsWindow from "./poi_details_window";
 
 
@@ -68,6 +69,17 @@ const EXTENT_PADDING = 60; // px of breathing room around the data when zooming 
 const EXTENT_MAXZOOM = 15; // stops a single POI (or a tiny cluster) from zooming in too far
 const PANEL_SETTLE_MS = 400; // longer than the splitter transition (300ms), so the pane has its final size
 const MIN_MAP_HEIGHT = 80; // px; below this the visible map is practically hidden (e.g. panel at 100%)
+
+// Directions (OpenRouteService): route lines + start/end markers
+const ROUTE_SOURCE = "poi-route";
+const ROUTE_POINT_SOURCE = "poi-route-points";
+const ROUTE_CASING_LAYER = `${ROUTE_SOURCE}-casing`;
+const ROUTE_LINE_LAYER = `${ROUTE_SOURCE}-line`;
+const ROUTE_POINT_LAYER = `${ROUTE_POINT_SOURCE}-circles`;
+const ROUTE_COLOR = "#1c7ed6"; // selected route
+const ROUTE_ALT_COLOR = "#868e96"; // alternative routes
+const ROUTE_FIT_PADDING = 80; // px around the routes when zooming to them
+const ROUTE_FIT_MAXZOOM = 17;
 
 // zoom range of the level that comes after LEVELS[index]
 // (all -> reg -> pro -> mun -> bgy -> individual POIs)
@@ -208,6 +220,15 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
   const map = useMapStore((s) => s.map);
   const poi = usePoiStore((s) => s.poi);
   const selectedPoi = usePoiStore((s) => s.selectedPoi);
+
+  // Directions state (written by the Directions tab in the details window, drawn here)
+  const routes = usePoiStore((s) => s.routes);
+  const selectedRoute = usePoiStore((s) => s.selectedRoute);
+  const routeFrom = usePoiStore((s) => s.routeFrom);
+  const routeTo = usePoiStore((s) => s.routeTo);
+  const pickingFrom = usePoiStore((s) => s.pickingFrom);
+  const setPickingFrom = usePoiStore((s) => s.setPickingFrom);
+  const setPickedPoint = usePoiStore((s) => s.setPickedPoint);
 
   // recomputed only when the POI data changes
   const groups = useMemo(() => buildGroups(poi), [poi]);
@@ -385,6 +406,7 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
       try {
         if (activePageRef.current !== POI_PAGE) return;
         if (usePoiStore.getState().pickingCenter) return; // the click is picking the radius center
+        if (usePoiStore.getState().pickingFrom) return; // the click is picking the route start
 
         const feature = e.features?.[0];
         if (!feature || feature.geometry.type !== "Point") return;
@@ -414,6 +436,7 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
 
       const onGroupClick = (e: maplibregl.MapLayerMouseEvent) => {
         if (usePoiStore.getState().pickingCenter) return; // the click is picking the radius center
+        if (usePoiStore.getState().pickingFrom) return; // the click is picking the route start
 
         const feature = e.features?.[0];
         if (!feature || feature.geometry.type !== "Point") return;
@@ -513,6 +536,188 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
     // adding an image makes maplibre re-render the layer, so POIs switch from the dot to their icon
     Promise.all(pending.map((id) => loadCategoryIcon(map, id).catch(() => false)));
   }, [map, poi]);
+
+  // ----- Directions: sources + layers (declared after the POI layers exist) -----
+  // route lines sit under the POI icons, the start/end markers above them but under the selected highlight
+  useEffect(() => {
+    if (!map) return;
+
+    map.addSource(ROUTE_SOURCE, { type: "geojson", data: EMPTY_COLLECTION });
+    map.addSource(ROUTE_POINT_SOURCE, { type: "geojson", data: EMPTY_COLLECTION });
+
+    const beforeLines = map.getLayer(POI_LAYER) ? POI_LAYER : undefined;
+    const beforeMarkers = map.getLayer(SELECTED_PULSE_LAYER) ? SELECTED_PULSE_LAYER : undefined;
+    const sortKey = ["case", ["get", "selected"], 1, 0] as unknown as maplibregl.ExpressionSpecification;
+
+    // white casing so the line stays readable on any basemap
+    map.addLayer(
+      {
+        id: ROUTE_CASING_LAYER,
+        type: "line",
+        source: ROUTE_SOURCE,
+        layout: { "line-join": "round", "line-cap": "round", "line-sort-key": sortKey },
+        paint: {
+          "line-color": "#ffffff",
+          "line-width": ["case", ["get", "selected"], 9, 7],
+          "line-opacity": 0.9,
+        },
+      },
+      beforeLines
+    );
+
+    map.addLayer(
+      {
+        id: ROUTE_LINE_LAYER,
+        type: "line",
+        source: ROUTE_SOURCE,
+        layout: { "line-join": "round", "line-cap": "round", "line-sort-key": sortKey },
+        paint: {
+          "line-color": ["case", ["get", "selected"], ROUTE_COLOR, ROUTE_ALT_COLOR],
+          "line-width": ["case", ["get", "selected"], 5, 4],
+          "line-opacity": ["case", ["get", "selected"], 1, 0.75],
+        },
+      },
+      beforeLines
+    );
+
+    // start (green) and end (red) markers
+    map.addLayer(
+      {
+        id: ROUTE_POINT_LAYER,
+        type: "circle",
+        source: ROUTE_POINT_SOURCE,
+        paint: {
+          "circle-radius": 8,
+          "circle-color": ["match", ["get", "kind"], "from", "#2f9e44", "#e03131"],
+          "circle-stroke-width": 3,
+          "circle-stroke-color": "#ffffff",
+        },
+      },
+      beforeMarkers
+    );
+
+    return () => {
+      try {
+        if (map.getLayer(ROUTE_POINT_LAYER)) map.removeLayer(ROUTE_POINT_LAYER);
+        if (map.getLayer(ROUTE_LINE_LAYER)) map.removeLayer(ROUTE_LINE_LAYER);
+        if (map.getLayer(ROUTE_CASING_LAYER)) map.removeLayer(ROUTE_CASING_LAYER);
+        if (map.getSource(ROUTE_POINT_SOURCE)) map.removeSource(ROUTE_POINT_SOURCE);
+        if (map.getSource(ROUTE_SOURCE)) map.removeSource(ROUTE_SOURCE);
+      } catch {
+        // the map was already removed, so there is nothing left to clean up
+      }
+    };
+  }, [map]);
+
+  // draw the route lines (selected one highlighted, alternatives in gray)
+  useEffect(() => {
+    if (!map) return;
+    const src = map.getSource(ROUTE_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+
+    if (routes.length === 0) {
+      src.setData(EMPTY_COLLECTION);
+      return;
+    }
+
+    // ORS already returns [lng, lat], which is exactly what GeoJSON / maplibre expect
+    src.setData({
+      type: "FeatureCollection",
+      features: routes.map((r, i) => ({
+        type: "Feature",
+        properties: { selected: i === selectedRoute },
+        geometry: { type: "LineString", coordinates: r.coordinates },
+      })),
+    } as unknown as GeoJSONData);
+  }, [map, routes, selectedRoute]);
+
+  // start / end markers (the end marker only shows once there is a route to point at)
+  useEffect(() => {
+    if (!map) return;
+    const src = map.getSource(ROUTE_POINT_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+
+    const features: unknown[] = [];
+    const add = (p: Place | null, kind: "from" | "to") => {
+      if (!p) return;
+      features.push({
+        type: "Feature",
+        properties: { kind },
+        geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+      });
+    };
+    add(routeFrom, "from");
+    if (routes.length > 0) add(routeTo, "to");
+
+    src.setData({ type: "FeatureCollection", features } as unknown as GeoJSONData);
+  }, [map, routeFrom, routeTo, routes]);
+
+  // zoom to the routes when a NEW set arrives (not when only the selected route changes),
+  // fitted into the part of the map that is actually visible
+  useEffect(() => {
+    if (!map || routes.length === 0) return;
+
+    const bounds = new maplibregl.LngLatBounds();
+    for (const r of routes) {
+      for (const c of r.coordinates) bounds.extend(c);
+    }
+    if (bounds.isEmpty()) return;
+
+    map.resize(); // make sure the canvas matches its container before measuring
+    const hidden = hiddenHeight(map, mapPaneRef?.current); // strip hidden behind the bottom panel
+    map.fitBounds(bounds, {
+      padding: {
+        top: ROUTE_FIT_PADDING,
+        left: ROUTE_FIT_PADDING,
+        right: ROUTE_FIT_PADDING,
+        bottom: ROUTE_FIT_PADDING + hidden,
+      },
+      maxZoom: ROUTE_FIT_MAXZOOM,
+      duration: 600,
+    });
+  }, [map, routes, mapPaneRef]);
+
+  // while picking, the next map click becomes the route start point (Esc cancels)
+  useEffect(() => {
+    if (!map || !pickingFrom) return;
+
+    const onClick = async (e: maplibregl.MapMouseEvent) => {
+      const { lat, lng } = e.lngLat;
+      setPickingFrom(false);
+
+      // use the coordinates right away; replace the name once the reverse geocode answers
+      let place: Place = {
+        name: "Picked location",
+        address: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+        lat,
+        lon: lng,
+      };
+      try {
+        place = (await reverseGeocode(lat, lng)) ?? place;
+      } catch {
+        // keep the coordinates-only place
+      }
+      setPickedPoint({ ...place }); // new object every time, so the Directions tab reacts
+    };
+
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setPickingFrom(false);
+    };
+
+    map.on("click", onClick);
+    window.addEventListener("keydown", onKey);
+    map.getCanvas().style.cursor = "crosshair";
+
+    return () => {
+      map.off("click", onClick);
+      window.removeEventListener("keydown", onKey);
+      try {
+        map.getCanvas().style.cursor = "";
+      } catch {
+        // canvas is gone together with the map
+      }
+    };
+  }, [map, pickingFrom, setPickingFrom, setPickedPoint]);
 
   // put the selected POI into the highlight source (cleared when nothing is selected or on another page)
   useEffect(() => {

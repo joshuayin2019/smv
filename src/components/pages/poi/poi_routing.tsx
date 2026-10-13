@@ -1,12 +1,14 @@
-// components/map/poi_routing.tsx  (Directions tab of the POI details window)
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+// pages/poi/poi_routing.tsx  (Directions tab of the POI details window)
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActionIcon,
   Alert,
+  Badge,
   Box,
   Button,
   Group,
   Loader,
+  Menu,
   Paper,
   ScrollArea,
   SegmentedControl,
@@ -19,13 +21,16 @@ import {
   IconAlertCircle,
   IconBike,
   IconCar,
+  IconCheck,
   IconCurrentLocation,
   IconMapPin,
   IconRoute,
+  IconSearch,
   IconTargetArrow,
   IconWalk,
 } from '@tabler/icons-react';
 import { ACCENT, BORDER, NAVY, PANEL_BG } from '@/lib/theme_colors';
+import { usePoiStore } from '@/stores/poi_stores';
 import {
   formatClock,
   formatDistance,
@@ -37,19 +42,21 @@ import {
   type TravelMode,
 } from '@/lib/openroute';
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+type SearchMode = 'poi' | 'api' | 'all';
+type Suggestion = Place & { source: 'poi' | 'api' };
+
+const MODE_LABEL: Record<SearchMode, string> = {
+  poi: 'POI only',
+  api: 'OpenRoute API',
+  all: 'All',
+};
+
 interface Props {
   /** The clicked POI. Used as the default destination ("To"), which the user can change. */
   destination: { name: string; lat: number; lon: number };
-  /** Called whenever the route list or selected route changes -> draw it on the map. */
-  onRoutesChange?: (routes: RouteResult[], selectedIndex: number) => void;
-  /** Called when the start point changes (e.g. to drop a marker). */
-  onFromChange?: (place: Place | null) => void;
-  /** Called when the destination changes from the clicked POI to another place (or back). */
-  onToChange?: (place: Place | null) => void;
-  /** Called when the user clicks the "pick on map" button; next map click should set `pickedPoint`. */
-  onPickOnMap?: () => void;
-  /** Set this from the parent after the user clicked the map in pick mode (sets the start point). */
-  pickedPoint?: Place | null;
 }
 
 function modeLabel(icon: ReactNode, text: string) {
@@ -79,6 +86,89 @@ function SummaryTile({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** Turn the POI GeoJSON into a flat, de-duplicated, sorted list of places. */
+function buildPoiPlaces(poiData?: { features?: any[] } | null): Suggestion[] {
+  const feats = poiData?.features;
+  if (!Array.isArray(feats)) return [];
+  const seen = new Map<string, Suggestion>();
+  for (const f of feats) {
+    const c = f?.geometry?.coordinates;
+    const p = f?.properties ?? {};
+    const name: string | undefined = p.name;
+    if (!name || !Array.isArray(c) || !Number.isFinite(c[0]) || !Number.isFinite(c[1])) continue;
+    if (seen.has(name)) continue;
+    seen.set(name, {
+      name,
+      address: [p.rd_name, p.barangay, p.city_municipality, p.region].filter(Boolean).join(', '),
+      lon: c[0], // GeoJSON order is [lon, lat]
+      lat: c[1],
+      source: 'poi',
+    });
+  }
+  return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Local search: names that start with the text first, then names/addresses that contain it. */
+function filterPois(list: Suggestion[], q: string, limit = 8): Suggestion[] {
+  const ql = q.toLowerCase();
+  const starts: Suggestion[] = [];
+  const contains: Suggestion[] = [];
+  for (const p of list) {
+    const n = p.name.toLowerCase();
+    if (n.startsWith(ql)) starts.push(p);
+    else if (n.includes(ql) || p.address.toLowerCase().includes(ql)) contains.push(p);
+  }
+  return [...starts, ...contains].slice(0, limit);
+}
+
+// ---------------------------------------------------------------------------
+// Suggestion source menu (shown inside the From / To fields)
+// ---------------------------------------------------------------------------
+function SourceMenu({
+  mode,
+  onChange,
+  hasPoi,
+}: {
+  mode: SearchMode;
+  onChange: (m: SearchMode) => void;
+  hasPoi: boolean;
+}) {
+  const item = (value: SearchMode, text: string, disabled = false) => (
+    <Menu.Item
+      key={value}
+      disabled={disabled}
+      color={mode === value ? NAVY : undefined}
+      fw={mode === value ? 700 : 400}
+      rightSection={mode === value ? <IconCheck size={14} /> : null}
+      onClick={() => onChange(value)}
+    >
+      {text}
+    </Menu.Item>
+  );
+
+  return (
+    <Menu position="bottom-end" withinPortal>
+      <Menu.Target>
+        <ActionIcon
+          size="sm"
+          variant="subtle"
+          color={NAVY}
+          title={`Suggestions from: ${MODE_LABEL[mode]}`}
+          aria-label="Choose where suggestions come from"
+        >
+          <IconSearch size={15} />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>Suggestions from</Menu.Label>
+        {item('poi', MODE_LABEL.poi, !hasPoi)}
+        {item('api', MODE_LABEL.api)}
+        {item('all', MODE_LABEL.all, !hasPoi)}
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Reusable place search input (used for both "From" and "To")
 // ---------------------------------------------------------------------------
@@ -87,8 +177,10 @@ interface PlaceInputProps {
   placeholder?: string;
   value: Place | null;
   onChange: (p: Place | null) => void;
-  /** Bias search results near this point. */
+  /** Bias API search results near this point. */
   near: { lat: number; lon: number };
+  searchMode: SearchMode;
+  poiPlaces: Suggestion[];
   leftSection: ReactNode;
   /** Extra buttons shown on the right side of the input. */
   actions?: ReactNode;
@@ -102,13 +194,15 @@ function PlaceInput({
   value,
   onChange,
   near,
+  searchMode,
+  poiPlaces,
   leftSection,
   actions,
   actionCount = 0,
   onError,
 }: PlaceInputProps) {
   const [query, setQuery] = useState(value?.name ?? '');
-  const [suggestions, setSuggestions] = useState<Place[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [searching, setSearching] = useState(false);
   const [showList, setShowList] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -118,14 +212,31 @@ function PlaceInput({
     if (value) setQuery(value.name);
   }, [value]);
 
-  // debounced place search
+  // place search (local POIs and/or OpenRouteService geocoder, depending on the mode)
   useEffect(() => {
     // don't search when the text is just the already selected place
     if (value && query === value.name) return;
-    if (query.trim().length < 2) {
+    const q = query.trim();
+    if (q.length < 2) {
       setSuggestions([]);
       return;
     }
+
+    const local = searchMode === 'api' ? [] : filterPois(poiPlaces, q);
+
+    // POI only -> instant, no network
+    if (searchMode === 'poi') {
+      setSuggestions(local);
+      setShowList(true);
+      return;
+    }
+
+    // "All" -> show POI matches immediately while the API results load
+    if (searchMode === 'all') {
+      setSuggestions(local);
+      setShowList(local.length > 0);
+    }
+
     const t = setTimeout(async () => {
       abortRef.current?.abort();
       const ctrl = new AbortController();
@@ -133,12 +244,14 @@ function PlaceInput({
       setSearching(true);
       onError(null);
       try {
-        const res = await searchPlaces(query, {
+        const res = await searchPlaces(q, {
           near,
           signal: ctrl.signal,
           countrySet: 'PH', // limit to the Philippines (remove to search worldwide)
         });
-        setSuggestions(res);
+        const api: Suggestion[] = res.map((p) => ({ ...p, source: 'api' }));
+        const seen = new Set(local.map((p) => p.name.toLowerCase()));
+        setSuggestions([...local, ...api.filter((p) => !seen.has(p.name.toLowerCase()))]);
         setShowList(true);
       } catch (e: any) {
         if (e.name !== 'AbortError') onError(e.message);
@@ -148,14 +261,14 @@ function PlaceInput({
     }, 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  }, [query, searchMode, poiPlaces]);
 
   // cancel pending request on unmount
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
 
-  const pick = (p: Place) => {
+  const pick = (p: Suggestion) => {
     setQuery(p.name);
     setSuggestions([]);
     setShowList(false);
@@ -195,10 +308,10 @@ function PlaceInput({
           pos="absolute"
           style={{ top: '100%', left: 0, right: 0, zIndex: 50, marginTop: 2 }}
         >
-          <ScrollArea.Autosize mah={200}>
+          <ScrollArea.Autosize mah={220}>
             {suggestions.map((p, i) => (
               <UnstyledButton
-                key={`${p.lat}-${p.lon}-${i}`}
+                key={`${p.source}-${p.lat}-${p.lon}-${i}`}
                 w="100%"
                 px="xs"
                 py={6}
@@ -209,14 +322,23 @@ function PlaceInput({
                 }}
                 style={{ borderBottom: `1px solid ${BORDER}` }}
               >
-                <Text fz={12} fw={600} c={NAVY} lineClamp={1}>
-                  {p.name}
-                </Text>
-                {p.address && (
-                  <Text fz={11} c="dimmed" lineClamp={1}>
-                    {p.address}
-                  </Text>
-                )}
+                <Group gap="xs" wrap="nowrap" justify="space-between" align="flex-start">
+                  <Box style={{ minWidth: 0 }}>
+                    <Text fz={12} fw={600} c={NAVY} lineClamp={1}>
+                      {p.name}
+                    </Text>
+                    {p.address && (
+                      <Text fz={11} c="dimmed" lineClamp={1}>
+                        {p.address}
+                      </Text>
+                    )}
+                  </Box>
+                  {searchMode === 'all' && (
+                    <Badge size="xs" variant="light" color={p.source === 'poi' ? NAVY : 'gray'}>
+                      {p.source === 'poi' ? 'POI' : 'API'}
+                    </Badge>
+                  )}
+                </Group>
               </UnstyledButton>
             ))}
           </ScrollArea.Autosize>
@@ -229,14 +351,7 @@ function PlaceInput({
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-export default function PoiRouting({
-  destination,
-  onRoutesChange,
-  onFromChange,
-  onToChange,
-  onPickOnMap,
-  pickedPoint,
-}: Props) {
+export default function PoiRouting({ destination }: Props) {
   const poiPlace: Place = {
     name: destination.name,
     address: '',
@@ -244,14 +359,32 @@ export default function PoiRouting({
     lon: destination.lon,
   };
 
-  // start / end points
-  const [from, setFrom] = useState<Place | null>(null);
-  const [to, setTo] = useState<Place | null>(poiPlace);
+  // shared state (the map layer in map_poi.tsx draws it)
+  const poi = usePoiStore((s) => s.poi);
+  const from = usePoiStore((s) => s.routeFrom);
+  const to = usePoiStore((s) => s.routeTo);
+  const routes = usePoiStore((s) => s.routes);
+  const selected = usePoiStore((s) => s.selectedRoute);
+  const picking = usePoiStore((s) => s.pickingFrom);
+  const pickedPoint = usePoiStore((s) => s.pickedPoint);
+  const setRouteFrom = usePoiStore((s) => s.setRouteFrom);
+  const setRouteTo = usePoiStore((s) => s.setRouteTo);
+  const setRoutes = usePoiStore((s) => s.setRoutes);
+  const setPickingFrom = usePoiStore((s) => s.setPickingFrom);
+  const resetRoute = usePoiStore((s) => s.resetRoute);
 
-  // routing
+  // suggestion source
+  const poiPlaces = useMemo(() => buildPoiPlaces(poi), [poi]);
+  const hasPoi = poiPlaces.length > 0;
+  const [searchMode, setSearchMode] = useState<SearchMode>(hasPoi ? 'all' : 'api');
+
+  // if POI data disappears, fall back to the API
+  useEffect(() => {
+    if (!hasPoi && searchMode !== 'api') setSearchMode('api');
+  }, [hasPoi, searchMode]);
+
+  // routing (local UI state only)
   const [mode, setMode] = useState<TravelMode>('driving');
-  const [routes, setRoutes] = useState<RouteResult[]>([]);
-  const [selected, setSelected] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -260,41 +393,41 @@ export default function PoiRouting({
   // ----- helpers -----
   const clearRoutes = () => {
     routeAbort.current?.abort();
-    setRoutes([]);
-    setSelected(0);
+    setRoutes([], 0);
     setError(null);
     setLoading(false);
-    onRoutesChange?.([], 0);
   };
 
   const chooseFrom = (p: Place | null) => {
-    setFrom(p);
+    setRouteFrom(p);
     clearRoutes();
-    onFromChange?.(p);
   };
 
   const chooseTo = (p: Place | null) => {
-    setTo(p);
+    setRouteTo(p);
     clearRoutes();
-    onToChange?.(p);
   };
 
   // when a different POI is clicked, reset "To" to that POI
   useEffect(() => {
-    setTo({ name: destination.name, address: '', lat: destination.lat, lon: destination.lon });
+    setRouteTo({ name: destination.name, address: '', lat: destination.lat, lon: destination.lon });
     clearRoutes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [destination.name, destination.lat, destination.lon]);
 
-  // point picked on the map by the parent
+  // point picked on the map (map_poi.tsx sets it after the click)
   useEffect(() => {
     if (pickedPoint) chooseFrom(pickedPoint);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pickedPoint]);
 
-  // cancel pending route request when the panel closes
+  // when the tab closes: cancel pending requests and clear the route + markers from the map
   useEffect(() => {
-    return () => routeAbort.current?.abort();
+    return () => {
+      routeAbort.current?.abort();
+      resetRoute();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ----- use my location -----
@@ -329,13 +462,10 @@ export default function PoiRouting({
       const result = await getRoutes(from, to, mode, ctrl.signal);
       if (result.length === 0) {
         setError('No route found between these two points.');
-        setRoutes([]);
-        onRoutesChange?.([], 0);
+        setRoutes([], 0);
         return;
       }
-      setRoutes(result);
-      setSelected(0);
-      onRoutesChange?.(result, 0);
+      setRoutes(result, 0);
     } catch (e: any) {
       if (e.name !== 'AbortError') setError(e.message || 'Failed to get directions.');
     } finally {
@@ -343,14 +473,13 @@ export default function PoiRouting({
     }
   };
 
-  const selectRoute = (i: number) => {
-    setSelected(i);
-    onRoutesChange?.(routes, i);
-  };
+  const selectRoute = (i: number) => setRoutes(routes, i);
 
   const current = routes[selected];
   const isPoiDestination =
     !!to && to.lat === destination.lat && to.lon === destination.lon && to.name === destination.name;
+
+  const sourceMenu = <SourceMenu mode={searchMode} onChange={setSearchMode} hasPoi={hasPoi} />;
 
   return (
     <Stack gap="sm">
@@ -361,11 +490,14 @@ export default function PoiRouting({
         value={from}
         onChange={chooseFrom}
         near={{ lat: destination.lat, lon: destination.lon }}
+        searchMode={searchMode}
+        poiPlaces={poiPlaces}
         leftSection={<IconTargetArrow size={14} />}
         onError={setError}
-        actionCount={2}
+        actionCount={3}
         actions={
           <>
+            {sourceMenu}
             <ActionIcon
               size="sm"
               variant="subtle"
@@ -378,17 +510,22 @@ export default function PoiRouting({
             </ActionIcon>
             <ActionIcon
               size="sm"
-              variant="subtle"
-              color={NAVY}
+              variant={picking ? 'filled' : 'subtle'}
+              color={picking ? ACCENT : NAVY}
               title="Pick on map"
               aria-label="Pick start point on map"
-              onClick={() => onPickOnMap?.()}
+              onClick={() => setPickingFrom(!picking)}
             >
               <IconMapPin size={15} />
             </ActionIcon>
           </>
         }
       />
+      {picking && (
+        <Text fz={11} c={ACCENT} fw={600} mt={-6}>
+          Click anywhere on the map to set the start point…
+        </Text>
+      )}
 
       {/* Destination: defaults to the clicked POI but can be changed */}
       <PlaceInput
@@ -397,22 +534,27 @@ export default function PoiRouting({
         value={to}
         onChange={chooseTo}
         near={{ lat: destination.lat, lon: destination.lon }}
+        searchMode={searchMode}
+        poiPlaces={poiPlaces}
         leftSection={<IconMapPin size={14} color={ACCENT} />}
         onError={setError}
-        actionCount={isPoiDestination ? 0 : 1}
+        actionCount={isPoiDestination ? 1 : 2}
         actions={
-          !isPoiDestination ? (
-            <ActionIcon
-              size="sm"
-              variant="subtle"
-              color={NAVY}
-              title="Reset to selected POI"
-              aria-label="Reset destination to selected POI"
-              onClick={() => chooseTo(poiPlace)}
-            >
-              <IconTargetArrow size={15} />
-            </ActionIcon>
-          ) : null
+          <>
+            {sourceMenu}
+            {!isPoiDestination && (
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                color={NAVY}
+                title="Reset to selected POI"
+                aria-label="Reset destination to selected POI"
+                onClick={() => chooseTo(poiPlace)}
+              >
+                <IconTargetArrow size={15} />
+              </ActionIcon>
+            )}
+          </>
         }
       />
 
@@ -515,13 +657,10 @@ export default function PoiRouting({
       ) : (
         <Box p="sm" style={{ border: `1px dashed ${BORDER}`, borderRadius: 6, textAlign: 'center' }}>
           <Text fz={12} c="dimmed">
-            {loading ? 'Finding routes…' : 'Turn-by-turn directions will appear here.'}My locatio
+            {loading ? 'Finding routes…' : 'Turn-by-turn directions will appear here.'}
           </Text>
         </Box>
       )}
     </Stack>
   );
 }
-
-
-

@@ -1,5 +1,6 @@
 // src/stores/poi_stores.ts
 import { create } from "zustand";
+import type { Place, RouteResult } from "@/lib/openroute";
 
 export type PoiFeature = {
     type: "Feature";
@@ -64,8 +65,37 @@ type PoiState = {
     setPoi: (poi: PoiCollection) => void;
     setFilteredPoi: (rows: PoiProperties[] | null) => void;
     setRadius: (r: Partial<PoiRadius>) => void;
+    // turning this on turns pickingFrom off (both use the next map click)
     setPickingCenter: (v: boolean) => void;
     clearPoi: () => void;
+
+    // ----- Directions (OpenRouteService) -----------------------------------
+    // start / end of the current route search (drawn as markers on the map)
+    routeFrom: Place | null;
+    routeTo: Place | null;
+    // routes returned by the API and the one currently highlighted
+    routes: RouteResult[];
+    selectedRoute: number;
+    // true while the next map click should become the route start point
+    pickingFrom: boolean;
+    // the point picked on the map (always a NEW object so the Directions panel reacts every time)
+    pickedPoint: Place | null;
+    setRouteFrom: (p: Place | null) => void;
+    setRouteTo: (p: Place | null) => void;
+    setRoutes: (routes: RouteResult[], selected: number) => void;
+    // turning this on turns pickingCenter off (both use the next map click)
+    setPickingFrom: (v: boolean) => void;
+    setPickedPoint: (p: Place | null) => void;
+    resetRoute: () => void;
+};
+
+const emptyRoute = {
+    routeFrom: null,
+    routeTo: null,
+    routes: [] as RouteResult[],
+    selectedRoute: 0,
+    pickingFrom: false,
+    pickedPoint: null,
 };
 
 export const usePoiStore = create<PoiState>((set) => ({
@@ -80,7 +110,8 @@ export const usePoiStore = create<PoiState>((set) => ({
     setPoi: (poi) => set({ poi, selectedPoi: null }),
     setFilteredPoi: (filteredPoi) => set({ filteredPoi }),
     setRadius: (r) => set((s) => ({ radius: { ...s.radius, ...r } })),
-    setPickingCenter: (pickingCenter) => set({ pickingCenter }),
+    setPickingCenter: (pickingCenter) =>
+        set(pickingCenter ? { pickingCenter: true, pickingFrom: false } : { pickingCenter: false }),
     clearPoi: () =>
         set({
             poi: emptyPoi,
@@ -89,5 +120,15 @@ export const usePoiStore = create<PoiState>((set) => ({
             pickingCenter: false,
             selectedPoi: null,
             sphereActive: false,
+            ...emptyRoute,
         }),
+
+    ...emptyRoute,
+    setRouteFrom: (routeFrom) => set({ routeFrom }),
+    setRouteTo: (routeTo) => set({ routeTo }),
+    setRoutes: (routes, selectedRoute) => set({ routes, selectedRoute }),
+    setPickingFrom: (pickingFrom) =>
+        set(pickingFrom ? { pickingFrom: true, pickingCenter: false } : { pickingFrom: false }),
+    setPickedPoint: (pickedPoint) => set({ pickedPoint }),
+    resetRoute: () => set({ ...emptyRoute }),
 }));
