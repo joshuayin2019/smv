@@ -1,7 +1,6 @@
 // components/map/poi_details_window.tsx  (draggable details window for the POI clicked on the map)
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActionIcon,
   Badge,
   Box,
   Button,
@@ -11,30 +10,27 @@ import {
   Image,
   Modal,
   ScrollArea,
-  SegmentedControl,
   Stack,
   Tabs,
   Text,
-  TextInput,
 } from '@mantine/core';
 import {
   IconArrowsMaximize,
-  IconBike,
-  IconCar,
-  IconCurrentLocation,
   IconInfoCircle,
-  IconMapPin,
   IconRoute,
-  IconTargetArrow,
   IconView360,
-  IconWalk,
 } from '@tabler/icons-react';
 import type * as maplibregl from 'maplibre-gl';
 import { Photosphere, type PhotosphereView } from 'maplibre-gl-photosphere';
 import { useGlobalStore } from '@/stores/global_stores';
 import { useMapStore } from '@/stores/map_stores';
 import { usePoiStore, type PoiProperties, type PoiSelection } from '@/stores/poi_stores';
-import { ACCENT, BORDER, NAVY, NAVY_DEEP, PANEL_BG } from '@/lib/theme_colors';
+import { ACCENT, BORDER, NAVY, NAVY_DEEP } from '@/lib/theme_colors';
+import type { RouteResult } from '@/lib/tomtom';
+import PoiRouting from './poi_routing';
+
+//
+import type { FeatureCollection, LineString } from 'geojson';
 
 const POI_PAGE = 'Point of Interest'; // activePage value of the POI navbar item
 
@@ -77,6 +73,11 @@ const getPanoUrl = (p: PoiProperties): string | null => {
 const SPHERE_MIN_PITCH = 5;
 const SPHERE_MAX_PITCH = 175;
 
+// Route lines drawn on the map (Directions tab)
+const ROUTE_SRC = 'poi-routes';
+const ROUTE_LAYER_ALT = 'poi-routes-alt';
+const ROUTE_LAYER_MAIN = 'poi-routes-main';
+
 // Some maplibre-gl versions do not have this setter, so it is typed as optional
 type MapWithClamp = maplibregl.Map & { setCenterClampedToGround?: (value: boolean) => void };
 
@@ -105,6 +106,78 @@ function showLayers(map: maplibregl.Map, ids: string[]) {
     } catch {
       // layer removed or style not ready
     }
+  }
+}
+
+// Draw (or clear) the route lines. The selected route is navy, the alternatives are gray.
+// Pass an empty array to clear them.
+function drawRoutesOnMap(
+  map: maplibregl.Map | null,
+  routes: RouteResult[],
+  selectedIdx: number,
+  fit = true
+) {
+  if (!map) return;
+  try {
+    const data: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: routes.map((r, i) => ({
+        type: 'Feature',
+        properties: { selected: i === selectedIdx },
+        geometry: { type: 'LineString', coordinates: r.coordinates },
+      })),
+    };
+
+    const src = map.getSource(ROUTE_SRC) as maplibregl.GeoJSONSource | undefined;
+
+    if (!src) {
+      if (routes.length === 0) return; // nothing to clear
+      map.addSource(ROUTE_SRC, { type: 'geojson', data });
+      // alternatives first so the selected route is drawn on top
+      map.addLayer({
+        id: ROUTE_LAYER_ALT,
+        type: 'line',
+        source: ROUTE_SRC,
+        filter: ['==', ['get', 'selected'], false],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#8896ab', 'line-width': 5, 'line-opacity': 0.8 },
+      });
+      map.addLayer({
+        id: ROUTE_LAYER_MAIN,
+        type: 'line',
+        source: ROUTE_SRC,
+        filter: ['==', ['get', 'selected'], true],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': NAVY, 'line-width': 6 },
+      });
+    } else {
+      src.setData(data);
+    }
+
+    // zoom to the selected route
+    const coords = routes[selectedIdx]?.coordinates;
+    if (fit && coords?.length) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const [x, y] of coords) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+      map.fitBounds(
+        [
+          [minX, minY],
+          [maxX, maxY],
+        ],
+        { padding: 70, duration: 600 }
+      );
+    }
+  } catch (err) {
+    // style not ready / being swapped
+    console.error('Route draw failed:', err instanceof Error ? err.message : err);
   }
 }
 
@@ -222,140 +295,31 @@ function Row({ label, value }: Field) {
   );
 }
 
-// ----- Directions tab (DESIGN ONLY: nothing is routed yet) ---------------------
-type TravelMode = 'driving' | 'walking' | 'cycling';
-
-function modeLabel(icon: React.ReactNode, text: string) {
-  return (
-    <Group gap={4} wrap="nowrap" justify="center">
-      {icon}
-      <span>{text}</span>
-    </Group>
-  );
-}
-
-function SummaryTile({ label, value }: { label: string; value: string }) {
-  return (
-    <Box
-      flex={1}
-      px="xs"
-      py={6}
-      style={{ border: `1px solid ${BORDER}`, borderRadius: 6, background: PANEL_BG }}
-    >
-      <Text fz={10} c="dimmed" tt="uppercase" fw={600}>
-        {label}
-      </Text>
-      <Text fz={16} fw={700} c={NAVY}>
-        {value}
-      </Text>
-    </Box>
-  );
-}
-
-function DirectionsPanel({ destination }: { destination: string }) {
-  // local UI state only; wire these to the routing logic later
-  const [from, setFrom] = useState('');
-  const [mode, setMode] = useState<TravelMode>('driving');
-
-  return (
-    <Stack gap="sm">
-      {/* Start point */}
-      <TextInput
-        size="xs"
-        label="From"
-        placeholder="Type a place or pick on the map"
-        leftSection={<IconTargetArrow size={14} />}
-        value={from}
-        onChange={(e) => setFrom(e.currentTarget.value)}
-        rightSectionWidth={56}
-        rightSection={
-          <Group gap={2} wrap="nowrap">
-            <ActionIcon
-              size="sm"
-              variant="subtle"
-              color={NAVY}
-              title="Use my location"
-              aria-label="Use my location"
-              onClick={() => {
-                /* TODO: fill "From" with the device location */
-              }}
-            >
-              <IconCurrentLocation size={15} />
-            </ActionIcon>
-            <ActionIcon
-              size="sm"
-              variant="subtle"
-              color={NAVY}
-              title="Pick on map"
-              aria-label="Pick start point on map"
-              onClick={() => {
-                /* TODO: next map click sets the start point */
-              }}
-            >
-              <IconMapPin size={15} />
-            </ActionIcon>
-          </Group>
-        }
-      />
-
-      {/* Destination = the clicked POI (read only) */}
-      <TextInput
-        size="xs"
-        label="To"
-        value={destination}
-        readOnly
-        leftSection={<IconMapPin size={14} color={ACCENT} />}
-      />
-
-      {/* Travel mode */}
-      <SegmentedControl
-        size="xs"
-        fullWidth
-        value={mode}
-        onChange={(v) => setMode(v as TravelMode)}
-        data={[
-          { value: 'driving', label: modeLabel(<IconCar size={14} />, 'Drive') },
-          { value: 'walking', label: modeLabel(<IconWalk size={14} />, 'Walk') },
-          { value: 'cycling', label: modeLabel(<IconBike size={14} />, 'Cycle') },
-        ]}
-      />
-
-      <Button
-        size="xs"
-        color={NAVY}
-        leftSection={<IconRoute size={14} />}
-        onClick={() => {
-          /* TODO: request the route and draw it on the map */
-        }}
-      >
-        Get directions
-      </Button>
-
-      {/* Result summary (placeholders until routing is connected) */}
-      <Group gap="xs" wrap="nowrap">
-        <SummaryTile label="Distance" value="— km" />
-        <SummaryTile label="Duration" value="— min" />
-      </Group>
-
-      {/* Turn-by-turn list (empty state) */}
-      <Box
-        p="sm"
-        style={{ border: `1px dashed ${BORDER}`, borderRadius: 6, textAlign: 'center' }}
-      >
-        <Text fz={12} c="dimmed">
-          Turn-by-turn directions will appear here.
-        </Text>
-      </Box>
-    </Stack>
-  );
-}
-
 export default function PoiDetailsWindow() {
   const activePage = useGlobalStore((s) => s.activePage);
   const map = useMapStore((s) => s.map);
   const selected = usePoiStore((s) => s.selectedPoi);
   const setSelected = usePoiStore((s) => s.setSelectedPoi);
   const [tab, setTab] = useState<string>('details');
+
+  // ----- route lines (Directions tab) -----
+  const drawRoutes = (routes: RouteResult[], selectedIdx: number) => {
+    drawRoutesOnMap(map, routes, selectedIdx);
+  };
+
+  // clear the lines when leaving the Directions tab, switching POI, or leaving the POI page
+  useEffect(() => {
+    if (tab !== 'directions' || activePage !== POI_PAGE || !selected) {
+      drawRoutesOnMap(map, [], 0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, selected, activePage, map]);
+
+  // clear on unmount
+  useEffect(() => {
+    return () => drawRoutesOnMap(map, [], 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
 
   // 360 photosphere state (hooks must stay above the early returns)
   // The plugin is built to be created ONCE and then enter()/exit() many times, so the instance is
@@ -654,7 +618,15 @@ export default function PoiDetailsWindow() {
               </Stack>
             </>
           ) : (
-            <DirectionsPanel destination={p.name || 'Selected POI'} />
+            <PoiRouting
+              key={p.id} // reset the panel when another POI is clicked
+              destination={{
+                name: p.name || 'Selected POI',
+                lat: selected.lat,
+                lon: selected.lng, // the store uses `lng`, TomTom helper uses `lon`
+              }}
+              onRoutesChange={drawRoutes}
+            />
           )}
         </Box>
       </ScrollArea>
