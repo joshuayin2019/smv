@@ -39,6 +39,31 @@ const SELECT_ZOOM = 17; // minimum zoom when a POI is selected (table row or map
 const SELECT_FLY_MS = 800; // duration of the fly-to animation
 const GROUP_FONT = ["Montserrat Medium"]; // must exist in the basemap style's glyph server
 
+// Selected POI highlight: a bigger copy of its icon + a pulsing blue glow (same blue as the old Leaflet version)
+const SELECTED_SOURCE = "poi-selected";
+const SELECTED_PULSE_LAYER = "poi-selected-pulse";
+const SELECTED_ICON_LAYER = "poi-selected-icon";
+const SELECTED_COLOR = "#228be6";
+const PULSE_MS = 1200; // one heartbeat cycle (two quick beats, then a short rest)
+const EMPTY_COLLECTION = { type: "FeatureCollection", features: [] } as unknown as GeoJSONData;
+
+// cat-<category_id> if that image is registered, otherwise the default dot (shared by the normal and the selected layer)
+const ICON_IMAGE_EXPR = [
+  "coalesce",
+  ["image", ["concat", ICON_PREFIX, ["to-string", ["get", "category_id"]]]],
+  ["image", DEFAULT_ICON],
+] as unknown as maplibregl.ExpressionSpecification;
+
+// Icon size of the selected POI; `scale` is the heartbeat factor (1 = resting size)
+const selectedIconSize = (scale: number) =>
+  ["interpolate", ["linear"], ["zoom"], 14, 1.0 * scale, 17, 1.5 * scale] as unknown as maplibregl.ExpressionSpecification;
+
+// smooth 0..1 bump centred on `center`
+const bump = (t: number, center: number, width: number) => Math.exp(-(((t - center) / width) ** 2));
+
+// "lub-dub": a strong beat, a smaller second beat, then a rest (t goes 0 -> 1 over one cycle)
+const heartbeatScale = (t: number) => 1 + 0.3 * bump(t, 0.12, 0.06) + 0.2 * bump(t, 0.32, 0.07);
+
 const EXTENT_PADDING = 60; // px of breathing room around the data when zooming to its extent
 const EXTENT_MAXZOOM = 15; // stops a single POI (or a tiny cluster) from zooming in too far
 const PANEL_SETTLE_MS = 400; // longer than the splitter transition (300ms), so the pane has its final size
@@ -306,13 +331,43 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
       source: POI_SOURCE,
       minzoom: POINTS_MINZOOM,
       layout: {
-        // cat-<category_id> if that image is registered, otherwise the default dot
-        "icon-image": [
-          "coalesce",
-          ["image", ["concat", ICON_PREFIX, ["to-string", ["get", "category_id"]]]],
-          ["image", DEFAULT_ICON],
-        ],
+        "icon-image": ICON_IMAGE_EXPR,
         "icon-size": ["interpolate", ["linear"], ["zoom"], 14, 0.7, 17, 1],
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+      },
+    });
+
+    // selected POI: holds a single feature, filled by the effect further down.
+    // Added after the POI layer so it draws on top: first the pulsing glow, then the bigger icon.
+    const selectedNow = usePoiStore.getState().selectedPoi;
+    map.addSource(SELECTED_SOURCE, {
+      type: "geojson",
+      data: selectedNow
+        ? ({
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [selectedNow.lng, selectedNow.lat] },
+            properties: { category_id: selectedNow.properties.category_id },
+          } as unknown as GeoJSONData)
+        : EMPTY_COLLECTION,
+    });
+    map.addLayer({
+      id: SELECTED_PULSE_LAYER,
+      type: "circle",
+      source: SELECTED_SOURCE,
+      minzoom: POINTS_MINZOOM,
+      // radius and opacity are animated by the effect further down
+      paint: { "circle-color": SELECTED_COLOR, "circle-opacity": 0.4, "circle-radius": 14, "circle-blur": 0.6 },
+    });
+    map.addLayer({
+      id: SELECTED_ICON_LAYER,
+      type: "symbol",
+      source: SELECTED_SOURCE,
+      minzoom: POINTS_MINZOOM,
+      layout: {
+        "icon-image": ICON_IMAGE_EXPR,
+        // about 1.5x the normal icon (old version: 28px vs 18px); the heartbeat effect scales it further
+        "icon-size": selectedIconSize(1),
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
       },
@@ -424,6 +479,9 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
           if (map.getLayer(`poi-group-label-${lvl.level}`)) map.removeLayer(`poi-group-label-${lvl.level}`);
           if (map.getLayer(`poi-group-${lvl.level}`)) map.removeLayer(`poi-group-${lvl.level}`);
         }
+        if (map.getLayer(SELECTED_ICON_LAYER)) map.removeLayer(SELECTED_ICON_LAYER);
+        if (map.getLayer(SELECTED_PULSE_LAYER)) map.removeLayer(SELECTED_PULSE_LAYER);
+        if (map.getSource(SELECTED_SOURCE)) map.removeSource(SELECTED_SOURCE);
         if (map.getLayer(POI_LAYER)) map.removeLayer(POI_LAYER);
         if (map.getSource(GROUP_SOURCE)) map.removeSource(GROUP_SOURCE);
         if (map.getSource(POI_SOURCE)) map.removeSource(POI_SOURCE);
@@ -455,6 +513,58 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
     // adding an image makes maplibre re-render the layer, so POIs switch from the dot to their icon
     Promise.all(pending.map((id) => loadCategoryIcon(map, id).catch(() => false)));
   }, [map, poi]);
+
+  // put the selected POI into the highlight source (cleared when nothing is selected or on another page)
+  useEffect(() => {
+    if (!map) return;
+    const src = map.getSource(SELECTED_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+
+    if (!selectedPoi || activePage !== POI_PAGE) {
+      src.setData(EMPTY_COLLECTION);
+      return;
+    }
+    src.setData({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [selectedPoi.lng, selectedPoi.lat] },
+      properties: { category_id: selectedPoi.properties.category_id },
+    } as unknown as GeoJSONData);
+  }, [map, selectedPoi, activePage]);
+
+  // heartbeat on the selected POI: the icon beats "lub-dub" while a glow expands and fades around it
+  useEffect(() => {
+    if (!map || !selectedPoi || activePage !== POI_PAGE) return;
+
+    let raf = 0;
+    const start = performance.now();
+
+    const tick = (now: number) => {
+      const t = ((now - start) % PULSE_MS) / PULSE_MS; // 0 -> 1, then starts over
+      try {
+        if (map.getLayer(SELECTED_PULSE_LAYER)) {
+          map.setPaintProperty(SELECTED_PULSE_LAYER, "circle-radius", 14 + 12 * t); // grows
+          map.setPaintProperty(SELECTED_PULSE_LAYER, "circle-opacity", 0.45 * (1 - t)); // fades out
+        }
+        if (map.getLayer(SELECTED_ICON_LAYER)) {
+          map.setLayoutProperty(SELECTED_ICON_LAYER, "icon-size", selectedIconSize(heartbeatScale(t)));
+        }
+      } catch {
+        // style not ready or map removed: the next frame (or the cleanup) handles it
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      // back to the resting size
+      try {
+        if (map.getLayer(SELECTED_ICON_LAYER)) map.setLayoutProperty(SELECTED_ICON_LAYER, "icon-size", selectedIconSize(1));
+      } catch {
+        // map already removed
+      }
+    };
+  }, [map, selectedPoi, activePage]);
 
   // zoom to the selected POI, whether it was picked in the table or clicked on the map.
   // A new selection object is created on every click, so clicking the same POI again re-centers it.

@@ -1,5 +1,5 @@
 // components/map/poi_details_window.tsx  (draggable details window for the POI clicked on the map)
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActionIcon,
   Badge,
@@ -26,10 +26,14 @@ import {
   IconMapPin,
   IconRoute,
   IconTargetArrow,
+  IconView360,
   IconWalk,
 } from '@tabler/icons-react';
+import type * as maplibregl from 'maplibre-gl';
+import { Photosphere, type PhotosphereView } from 'maplibre-gl-photosphere';
 import { useGlobalStore } from '@/stores/global_stores';
-import { usePoiStore } from '@/stores/poi_stores';
+import { useMapStore } from '@/stores/map_stores';
+import { usePoiStore, type PoiProperties, type PoiSelection } from '@/stores/poi_stores';
 import { ACCENT, BORDER, NAVY, NAVY_DEEP, PANEL_BG } from '@/lib/theme_colors';
 
 const POI_PAGE = 'Point of Interest'; // activePage value of the POI navbar item
@@ -52,6 +56,86 @@ const DIMENSIONS = {
 // URL of the POI photo. Adjust this to wherever your images are served from.
 // Assumes the `filename` column holds the image file name (see poi_image_route.ts).
 const poiImageUrl = (filename: string) => `/api/pages/poi/images/${encodeURIComponent(filename)}`;
+
+// URL of the 360 panorama (equirectangular, 2:1). Adjust to your own route.
+// Assumes a `pano_filename` column on the POI (add it to PoiProperties in poi_stores).
+const panoUrl = (filename: string) => `/api/pages/poi/panoramas/${encodeURIComponent(filename)}`;
+
+// While you have no separate pano_filename column yet: true = treat the normal POI photo (`filename`)
+// as the 360 panorama too, so the "View 360°" button shows for every POI that has a photo.
+// Set to false once you have a real pano_filename column.
+const PANO_FALLBACK_TO_PHOTO = true;
+
+// URL of the panorama for a POI, or null when it has none
+const getPanoUrl = (p: PoiProperties): string | null => {
+  if (p.pano_filename) return panoUrl(p.pano_filename);
+  if (PANO_FALLBACK_TO_PHOTO && p.filename) return poiImageUrl(p.filename);
+  return null;
+};
+
+// Photosphere needs to look up/down freely, so these limits are applied only while inside it
+const SPHERE_MIN_PITCH = 5;
+const SPHERE_MAX_PITCH = 175;
+
+// Some maplibre-gl versions do not have this setter, so it is typed as optional
+type MapWithClamp = maplibregl.Map & { setCenterClampedToGround?: (value: boolean) => void };
+
+// Hide the given layers and return the ids that were actually hidden (so only those are restored later).
+// A hidden layer stops loading and parsing its tiles, which matters inside the photosphere: the camera
+// looks at the horizon, so maplibre would otherwise request a huge number of tiles and run out of memory.
+function hideLayers(map: maplibregl.Map, ids: string[]): string[] {
+  const hidden: string[] = [];
+  for (const id of ids) {
+    try {
+      if (!map.getLayer(id)) continue;
+      if (map.getLayoutProperty(id, 'visibility') === 'none') continue;
+      map.setLayoutProperty(id, 'visibility', 'none');
+      hidden.push(id);
+    } catch {
+      // layer removed or style not ready
+    }
+  }
+  return hidden;
+}
+
+function showLayers(map: maplibregl.Map, ids: string[]) {
+  for (const id of ids) {
+    try {
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'visible');
+    } catch {
+      // layer removed or style not ready
+    }
+  }
+}
+
+// Checks that an image can really be loaded (404, wrong file, etc. -> 'failed').
+// The browser caches it, so the sphere opens instantly afterwards.
+type ImageStatus = 'idle' | 'loading' | 'ok' | 'failed';
+
+function useImageStatus(url: string | null): ImageStatus {
+  const [state, setState] = useState<{ url: string | null; status: ImageStatus }>({ url: null, status: 'idle' });
+
+  useEffect(() => {
+    if (!url) return;
+    let cancelled = false;
+    const img = new window.Image();
+    img.onload = () => {
+      if (!cancelled) setState({ url, status: 'ok' });
+    };
+    img.onerror = () => {
+      if (!cancelled) setState({ url, status: 'failed' });
+    };
+    img.src = url;
+    return () => {
+      cancelled = true;
+      img.onload = null;
+      img.onerror = null;
+    };
+  }, [url]);
+
+  if (!url) return 'idle';
+  return state.url === url ? state.status : 'loading'; // a result for an older url does not count
+}
 
 type Field = { label: string; value: string | number | null | undefined };
 
@@ -268,12 +352,194 @@ function DirectionsPanel({ destination }: { destination: string }) {
 
 export default function PoiDetailsWindow() {
   const activePage = useGlobalStore((s) => s.activePage);
+  const map = useMapStore((s) => s.map);
   const selected = usePoiStore((s) => s.selectedPoi);
   const setSelected = usePoiStore((s) => s.setSelectedPoi);
   const [tab, setTab] = useState<string>('details');
 
+  // 360 photosphere state (hooks must stay above the early returns)
+  // The plugin is built to be created ONCE and then enter()/exit() many times, so the instance is
+  // kept and reused for the same POI instead of creating a new one on every click.
+  const sphereRef = useRef<Photosphere | null>(null);
+  const sphereKeyRef = useRef<string | null>(null); // which POI the current instance belongs to
+  const exitViewRef = useRef<PhotosphereView | null>(null); // camera to return to (updated before every enter)
+  const prevLimitsRef = useRef<{ min: number; max: number }>({ min: 0, max: 60 });
+  const baseLayersRef = useRef<string[] | null>(null); // layers that existed before the sphere was built
+  const hiddenLayersRef = useRef<string[]>([]); // layers hidden while inside, restored on exit
+  const insideRef = useRef(false); // mirrors `inside` so cleanups can read it without stale closures
+  const [inside, setInside] = useState(false);
+  const setSphereActive = usePoiStore((s) => s.setSphereActive);
+  const spherePoiIdRef = useRef<number | null>(null); // POI the open sphere belongs to
+  const pendingSelectionRef = useRef<PoiSelection | null>(null); // row clicked while inside the sphere
+
+  // the "View 360°" button is only usable when its image really loads
+  const panoStatus = useImageStatus(selected ? getPanoUrl(selected.properties) : null);
+
+  // drop the current instance (used when another POI is opened or on unmount).
+  // Different plugin versions name the cleanup differently, so every known name is tried safely.
+  const disposeSphere = () => {
+    const s = sphereRef.current as unknown as {
+      remove?: () => void;
+      destroy?: () => void;
+      dispose?: () => void;
+    } | null;
+    try {
+      s?.remove?.();
+      s?.destroy?.();
+      s?.dispose?.();
+    } catch {
+      // nothing to clean up
+    }
+    sphereRef.current = null;
+    sphereKeyRef.current = null;
+    exitViewRef.current = null;
+    baseLayersRef.current = null;
+  };
+
+  const exitSphere = () => {
+    if (!insideRef.current) return;
+
+    // Bring the basemap back while the camera is still flying out, so its tiles are already loading
+    // when the flight ends (otherwise the map stays white until the exit callback fires).
+    if (map) {
+      window.setTimeout(() => {
+        showLayers(map, hiddenLayersRef.current);
+        map.triggerRepaint();
+      }, 250);
+    }
+
+    try {
+      sphereRef.current?.exit();
+    } catch (err) {
+      console.error('Photosphere exit failed:', err instanceof Error ? err.message : err);
+    }
+  };
+
+  const enterSphere = () => {
+    const url = selected ? getPanoUrl(selected.properties) : null;
+    if (!map || !selected || !url || insideRef.current || panoStatus !== 'ok') return;
+    spherePoiIdRef.current = selected.properties.id;
+
+    // remember the normal camera + limits so they can be restored on exit
+    const c = map.getCenter();
+    const view: PhotosphereView = {
+      center: [c.lng, c.lat],
+      zoom: map.getZoom(),
+      pitch: map.getPitch(),
+      bearing: map.getBearing(),
+    };
+    prevLimitsRef.current = { min: map.getMinPitch(), max: map.getMaxPitch() };
+    const clampMap = map as MapWithClamp;
+
+    // the plugin must look up/down freely and place the "eye" above the ground
+    map.setMinPitch(SPHERE_MIN_PITCH);
+    map.setMaxPitch(SPHERE_MAX_PITCH);
+    clampMap.setCenterClampedToGround?.(false);
+
+    const restore = () => {
+      insideRef.current = false;
+      setInside(false);
+      showLayers(map, hiddenLayersRef.current);
+      hiddenLayersRef.current = [];
+      setSphereActive(false);
+
+      // make sure the map redraws with its tiles once the camera is back
+      map.triggerRepaint();
+      window.setTimeout(() => {
+        map.resize();
+        map.triggerRepaint();
+      }, 600);
+
+      // a table row was clicked while inside: select it again now that the map is free, so the map flies to it
+      const pending = pendingSelectionRef.current;
+      pendingSelectionRef.current = null;
+      if (pending) {
+        window.setTimeout(() => usePoiStore.getState().setSelectedPoi({ ...pending }), 300);
+      }
+      map.setMinPitch(prevLimitsRef.current.min);
+      map.setMaxPitch(prevLimitsRef.current.max);
+      clampMap.setCenterClampedToGround?.(true);
+    };
+
+    try {
+      const key = `${selected.properties.id}|${url}`;
+
+      if (sphereRef.current && sphereKeyRef.current === key && exitViewRef.current) {
+        // same POI again: reuse the instance, just refresh the camera it returns to
+        Object.assign(exitViewRef.current, view);
+      } else {
+        // first time, or another POI: build a fresh instance
+        disposeSphere();
+        baseLayersRef.current = (map.getStyle()?.layers ?? []).map((l) => l.id);
+        exitViewRef.current = view;
+        sphereRef.current = new Photosphere(map, {
+          lngLat: [selected.lng, selected.lat],
+          imageUrl: url,
+          exitView: exitViewRef.current,
+          onEnter: () => {
+            insideRef.current = true;
+            setInside(true);
+            setSphereActive(true); // tells the map layer not to fly the camera while inside
+            // hide the basemap + POI layers so no tiles are loaded while looking around
+            hiddenLayersRef.current = hideLayers(map, baseLayersRef.current ?? []);
+          },
+          onExit: restore,
+        });
+        sphereKeyRef.current = key;
+      }
+
+      sphereRef.current.enter();
+    } catch (err) {
+      console.error('Photosphere enter failed:', err instanceof Error ? err.message : err);
+      restore();
+    }
+  };
+
+  // leaving the POI page, or unmounting, while inside -> exit cleanly
+  useEffect(() => {
+    if (activePage !== POI_PAGE) {
+      pendingSelectionRef.current = null;
+      exitSphere();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage]);
+
+  useEffect(() => {
+    return () => {
+      exitSphere();
+      disposeSphere();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // another table row (or nothing) got selected while inside the sphere -> leave the sphere
+  useEffect(() => {
+    if (!insideRef.current) return;
+    if (selected && selected.properties.id === spherePoiIdRef.current) return; // same POI clicked again
+    pendingSelectionRef.current = selected ?? null;
+    exitSphere();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
   // only on the POI page, and only after a POI was clicked
   if (activePage !== POI_PAGE || !selected) return null;
+
+  // while inside the photosphere the details window is hidden; only an exit button is shown
+  if (inside) {
+    return (
+      <Button
+        pos="fixed"
+        top={DEFAULT_TOP}
+        right={20}
+        style={{ zIndex: 1000 }}
+        color={NAVY}
+        leftSection={<IconView360 size={16} />}
+        onClick={exitSphere}
+      >
+        Exit 360° view
+      </Button>
+    );
+  }
 
   const p = selected.properties;
 
@@ -344,6 +610,23 @@ export default function PoiDetailsWindow() {
                   caption={`POI Number: ${p.id}`}
                 />
               )}
+
+              {/* Enter the 360 photosphere captured at this POI */}
+              {getPanoUrl(p) && (
+                <Button
+                  size="xs"
+                  variant="light"
+                  fullWidth
+                  mb="sm"
+                  leftSection={<IconView360 size={14} />}
+                  disabled={panoStatus !== 'ok'}
+                  loading={panoStatus === 'loading'}
+                  onClick={enterSphere}
+                >
+                  {panoStatus === 'failed' ? '360° view not available' : 'View 360°'}
+                </Button>
+              )}
+
               <Text fz={14} fw={700} c={NAVY} mb={4}>
                 {p.name || 'Unnamed POI'}
               </Text>

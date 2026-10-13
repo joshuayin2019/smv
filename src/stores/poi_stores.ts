@@ -20,6 +20,8 @@ export type PoiFeature = {
         province: string | null;
         region: string | null;
         filename: string | null;
+        // file name of the 360 panorama (equirectangular 2:1); null/undefined = no photosphere for this POI
+        pano_filename?: string | null;
         reg_code: string | null;
         pro_code: string | null;
         mun_code: string | null;
@@ -56,6 +58,9 @@ type PoiState = {
     // POI clicked on the map (null = details window closed)
     selectedPoi: PoiSelection | null;
     setSelectedPoi: (p: PoiSelection | null) => void;
+    // true while the 360 photosphere is open (the map layer must not move the camera then)
+    sphereActive: boolean;
+    setSphereActive: (v: boolean) => void;
     setPoi: (poi: PoiCollection) => void;
     setFilteredPoi: (rows: PoiProperties[] | null) => void;
     setRadius: (r: Partial<PoiRadius>) => void;
@@ -70,6 +75,8 @@ export const usePoiStore = create<PoiState>((set) => ({
     pickingCenter: false,
     selectedPoi: null,
     setSelectedPoi: (selectedPoi) => set({ selectedPoi }),
+    sphereActive: false,
+    setSphereActive: (sphereActive) => set({ sphereActive }),
     setPoi: (poi) => set({ poi, selectedPoi: null }),
     setFilteredPoi: (filteredPoi) => set({ filteredPoi }),
     setRadius: (r) => set((s) => ({ radius: { ...s.radius, ...r } })),
@@ -81,5 +88,6 @@ export const usePoiStore = create<PoiState>((set) => ({
             radius: emptyRadius,
             pickingCenter: false,
             selectedPoi: null,
+            sphereActive: false,
         }),
 }));
