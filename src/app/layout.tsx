@@ -7,6 +7,9 @@ import "./globals.css";
 //Mantine
 import '@mantine/core/styles.css';
 import '@mantine/nprogress/styles.css';
+import 'mantine-datatable/styles.css';
+
+
 
 
 

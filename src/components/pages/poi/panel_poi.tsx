@@ -1,5 +1,15 @@
-import { Box, Button, Group, Text, ActionIcon } from '@mantine/core';
-import { IconMaximize, IconMinimize, IconX, IconCaretUp } from '@tabler/icons-react';
+import { useRef, useState } from 'react';
+import { Box, Group, Text, ActionIcon, Splitter, Tooltip } from '@mantine/core';
+import {
+  IconMaximize,
+  IconMinimize,
+  IconBrowserMinus,
+  IconLayoutSidebarLeftCollapse,
+  IconLayoutSidebarLeftExpand,
+} from '@tabler/icons-react';
+import type { UseSplitterReturnValue } from '@mantine/hooks';
+import DataTablePOI from './datatable_poi';
+
 
 type PoiPanelProps = {
   onNormal: () => void;
@@ -8,12 +18,19 @@ type PoiPanelProps = {
 };
 
 export default function PoiPanel({ onNormal, onFull, onHide }: PoiPanelProps) {
+  const splitterRef = useRef<UseSplitterReturnValue>(null);
+
+  // true when the left (summary) pane is collapsed
+  const [summaryCollapsed, setSummaryCollapsed] = useState(false);
+
   return (
     <Box
       h="100%"
       bg="white"
       style={{
-        overflow: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
         borderTop: '0.5px solid var(--mantine-color-gray-3)',
       }}
     >
@@ -29,58 +46,77 @@ export default function PoiPanel({ onNormal, onFull, onHide }: PoiPanelProps) {
           borderBottom: '0.5px solid var(--mantine-color-gray-3)',
         }}
       >
-        <Text fz={11} fw={700} c="dark">
+        <Text fz={16} fw={700} c="dark">
           Point of Interest
         </Text>
 
         <Group gap={4} wrap="nowrap">
+          {/* Summary tab: label and icon follow the splitter state */}
+          <Tooltip label={summaryCollapsed ? 'Show summary tab' : 'Hide summary tab'}>
+            <ActionIcon
+              variant="transparent"
+              color="gray"
+              onClick={() => splitterRef.current?.toggleCollapse(0)}
+              aria-label={summaryCollapsed ? 'Show summary tab' : 'Hide summary tab'}
+            >
+              {summaryCollapsed ? (
+                <IconLayoutSidebarLeftExpand size={19} />
+              ) : (
+                <IconLayoutSidebarLeftCollapse size={19} />
+              )}
+            </ActionIcon>
+          </Tooltip>
+
           {/* 40% */}
-          <ActionIcon variant="transparent" color="gray" onClick={onNormal}>
-            <IconMinimize size={19} />
-          </ActionIcon>
+          <Tooltip label="Resize to 40%">
+            <ActionIcon variant="transparent" color="gray" onClick={onNormal}>
+              <IconMinimize size={19} />
+            </ActionIcon>
+          </Tooltip>
 
           {/* 100% */}
-          <ActionIcon variant="transparent" color="gray" onClick={onFull}>
-            <IconMaximize size={19} />
-          </ActionIcon>
+          <Tooltip label="Resize to 100%">
+            <ActionIcon variant="transparent" color="gray" onClick={onFull}>
+              <IconMaximize size={19} />
+            </ActionIcon>
+          </Tooltip>
 
           {/* Hide */}
-          <ActionIcon variant="transparent" color="gray" onClick={onHide}>
-            <IconX size={19} />
-          </ActionIcon>
+          <Tooltip label="Hide Tab">
+            <ActionIcon variant="transparent" color="gray" onClick={onHide}>
+              <IconBrowserMinus size={19} />
+            </ActionIcon>
+          </Tooltip>
         </Group>
-
-
       </Group>
 
-
-
-
-
-      <Group gap="xs" m={0} p={0}>
-        <Button size="xs" variant="default" onClick={onNormal}>
-          40%
-        </Button>
-        <Button size="xs" variant="default" onClick={onFull}>
-          100%
-        </Button>
-        <Button size="xs" variant="default" color="red" onClick={onHide}>
-          Hide
-        </Button>
-      </Group>
+      {/* Body: takes the remaining height under the header */}
+      <Box style={{ flex: 1, minHeight: 0 }}>
+        <Splitter
+          splitterRef={splitterRef}
+          h="100%"
+          onCollapseChange={(panelIndex, collapsed) => {
+            if (panelIndex === 0) setSummaryCollapsed(collapsed);
+          }}
+        >
+          <Splitter.Pane defaultSize={30} min={20} collapsible bg="blue">
+            Collapsible sidebar
+          </Splitter.Pane>
+          <Splitter.Pane defaultSize={70} min={30} bg="teal">
+            <DataTablePOI />
+          </Splitter.Pane>
+        </Splitter>
+      </Box>
     </Box>
   );
 }
-
 
 type PoiHideTabProps = {
   onShow: () => void;
 };
 
 export function PoiHideTab({ onShow }: PoiHideTabProps) {
-
-
-  return(
+  return (
     <Group
       justify="space-between"
       wrap="nowrap"
@@ -92,7 +128,7 @@ export function PoiHideTab({ onShow }: PoiHideTabProps) {
       style={{
         position: 'absolute',
         left: '50%',
-        transform: 'translateX(-50%)',   // centers the tab horizontally
+        transform: 'translateX(-50%)', // centers the tab horizontally
         bottom: 0,
         zIndex: 900,
         cursor: 'pointer',
@@ -120,5 +156,4 @@ export function PoiHideTab({ onShow }: PoiHideTabProps) {
       </ActionIcon>
     </Group>
   );
-
 }
