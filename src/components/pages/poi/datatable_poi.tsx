@@ -17,7 +17,7 @@ import {
   usePoiStore,
   emptyPoi,
   emptyRadius,
-  MIN_RADIUS_KM,
+  MIN_RADIUS_M,
   type PoiFeature,
   type PoiProperties,
 } from '@/stores/poi_stores';
@@ -135,7 +135,9 @@ export default function DataTablePOI() {
   const setFilteredPoi = usePoiStore((s) => s.setFilteredPoi);
   const setSelectedPoi = usePoiStore((s) => s.setSelectedPoi);
   // record shown in the details window (clicked in the table or on the map); compared by identity
-  const selectedProps = usePoiStore((s) => s.selectedPoi?.properties);
+  //const selectedProps = usePoiStore((s) => s.selectedPoi?.properties);
+  const selectedPoi = usePoiStore((s) => s.selectedPoi);
+  const selectedProps = selectedPoi?.properties;
 
   // Radius filter state lives in the store so the map can draw the circle / pick the center
   const radius = usePoiStore((s) => s.radius);
@@ -154,9 +156,9 @@ export default function DataTablePOI() {
 
   // The radius filters as soon as the center (lat + lng) is set; km falls back to the 1 km minimum
   const activeRadius = useMemo<ActiveRadius | null>(() => {
-    const { lat, lng, km } = radius;
+    const { lat, lng, m } = radius;
     if (typeof lat !== 'number' || typeof lng !== 'number') return null;
-    return { lat, lng, km: typeof km === 'number' && km >= MIN_RADIUS_KM ? km : MIN_RADIUS_KM };
+    return { lat, lng, km: typeof m === 'number' && m >= MIN_RADIUS_M ? m : MIN_RADIUS_M };
   }, [radius]);
 
   // Nearest first while a radius is active; back to the default order when it is cleared
@@ -165,7 +167,7 @@ export default function DataTablePOI() {
     setSortStatus(hasRadius ? DISTANCE_SORT : DEFAULT_SORT);
   }, [hasRadius]);
 
-  const radiusTouched = radius.lat !== '' || radius.lng !== '' || radius.km !== MIN_RADIUS_KM;
+  const radiusTouched = radius.lat !== '' || radius.lng !== '' || radius.m !== MIN_RADIUS_M;
 
   // Which columns are displayed (remembered between visits)
   // Key was bumped to -v3 so the new ID column shows up for existing users
@@ -369,6 +371,15 @@ export default function DataTablePOI() {
     setSelectedPoi({ properties: row.source, lng: row.lng, lat: row.lat });
   };
 
+  //Pagination
+  useEffect(() => {
+    if (!selectedPoi) return;
+    const idx = sortedRows.findIndex((r) => r.source === selectedPoi.properties);
+    if (idx === -1) return; // filtered out / not in the current result set
+    setOffset(Math.floor(idx / pageSize) * pageSize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPoi]);
+
   return (
     <Box h="100%" w="100%" style={{ display: 'flex', flexDirection: 'column' }}>
       {/* Toolbar: search + column picker */}
@@ -458,13 +469,13 @@ export default function DataTablePOI() {
           placeholder="Radius"
           rightSection="km"
           rightSectionWidth={28}
-          min={MIN_RADIUS_KM}
+          min={MIN_RADIUS_M}
           clampBehavior="blur"
           allowNegative={false}
           hideControls
           decimalScale={2}
-          value={radius.km}
-          onChange={(v) => setRadius({ km: typeof v === 'number' ? v : '' })}
+          value={radius.m}
+          onChange={(v) => setRadius({ m: typeof v === 'number' ? v : '' })}
         />
         <Button
           size="xs"

@@ -2,7 +2,7 @@
 import { useEffect } from "react";
 import * as maplibregl from "maplibre-gl";
 import { useMapStore } from "@/stores/map_stores";
-import { usePoiStore, MIN_RADIUS_KM } from "@/stores/poi_stores";
+import { usePoiStore, MIN_RADIUS_M } from "@/stores/poi_stores";
 
 const SRC = "poi-radius";
 const FILL_LAYER = `${SRC}-fill`;
@@ -13,9 +13,9 @@ type GeoJSONData = maplibregl.GeoJSONSourceSpecification["data"];
 const EMPTY = { type: "FeatureCollection", features: [] } as unknown as GeoJSONData;
 
 // Approximates a circle on the globe as a polygon (great-circle destination points)
-function circle(lng: number, lat: number, km: number, steps = 96): GeoJSONData {
+function circle(lng: number, lat: number, meters: number, steps = 96): GeoJSONData {
   const rad = Math.PI / 180;
-  const d = km / 6371; // angular distance
+  const d = meters / 6371; // angular distance
   const phi1 = lat * rad;
   const lambda1 = lng * rad;
 
@@ -83,12 +83,12 @@ export default function PoiRadius() {
     const src = map.getSource(SRC) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
 
-    const { lat, lng, km } = radius;
+    const { lat, lng, m } = radius;
     if (typeof lat !== "number" || typeof lng !== "number") {
       src.setData(EMPTY);
       return;
     }
-    const radiusKm = typeof km === "number" && km >= MIN_RADIUS_KM ? km : MIN_RADIUS_KM;
+    const radiusKm = typeof m === "number" && m >= MIN_RADIUS_M  ? m : MIN_RADIUS_M ;
     src.setData(circle(lng, lat, radiusKm));
   }, [map, radius]);
 

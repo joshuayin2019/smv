@@ -407,11 +407,18 @@ export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) 
       },
     });
 
+    // Hover cursor: maplibre styles its canvas container with `cursor: grab` (and `grabbing` while pressed),
+    // so setting canvas.style.cursor is not enough. A class on the container + a !important CSS rule
+    // (see the .poi-hover rule in the global stylesheet) always wins, including while the mouse is pressed.
+    const container = map.getCanvasContainer();
+
     const onEnter = () => {
-      map.getCanvas().style.cursor = "pointer";
+      const s = usePoiStore.getState();
+      if (s.pickingCenter || s.pickingFrom) return; // keep the crosshair while picking
+      container.classList.add("poi-hover");
     };
     const onLeave = () => {
-      map.getCanvas().style.cursor = "";
+      container.classList.remove("poi-hover");
     };
 
     // click a POI -> popup with its details
@@ -501,6 +508,8 @@ export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) 
 
     return () => {
       try {
+        container.classList.remove("poi-hover");
+
         map.off("click", POI_LAYER, onPoiClick);
         map.off("mouseenter", POI_LAYER, onEnter);
         map.off("mouseleave", POI_LAYER, onLeave);

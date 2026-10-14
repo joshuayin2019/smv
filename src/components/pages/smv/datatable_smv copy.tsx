@@ -1,5 +1,18 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { ActionIcon, Box, Button, Checkbox, Group, Menu, MultiSelect, TextInput } from '@mantine/core';
+import {
+  ActionIcon,
+  Box,
+  Button,
+  Checkbox,
+  Group,
+  Menu,
+  MultiSelect,
+  NumberInput,
+  SegmentedControl,
+  Select,
+  Stack,
+  TextInput,
+} from '@mantine/core';
 import { useDebouncedValue, useElementSize, useLocalStorage } from '@mantine/hooks';
 import { IconColumns3, IconSearch, IconX } from '@tabler/icons-react';
 import { DataTable, type DataTableColumn, type DataTableSortStatus } from 'mantine-datatable';
@@ -37,13 +50,14 @@ const COLUMN_DEFS: {
   { accessor: 'pro_name', title: 'Province', width: 260 },
   { accessor: 'fclass', title: 'Class', width: 120 },
   { accessor: 'smv_year', title: 'SMV Year', width: 100, textAlign: 'right' },
-  { accessor: 'r', title: 'Residential', width: 120, textAlign: 'right' },
-  { accessor: 'c', title: 'Commercial', width: 120, textAlign: 'right' },
-  { accessor: 'i', title: 'Industrial', width: 120, textAlign: 'right' },
-  { accessor: 'a', title: 'Agricultural', width: 120, textAlign: 'right' },
+  { accessor: 'r', title: 'Residential', width: 150, textAlign: 'right' },
+  { accessor: 'c', title: 'Commercial', width: 150, textAlign: 'right' },
+  { accessor: 'i', title: 'Industrial', width: 150, textAlign: 'right' },
+  { accessor: 'a', title: 'Agricultural', width: 150, textAlign: 'right' },
 ];
 const ALL_ACCESSORS = COLUMN_DEFS.map((c) => c.accessor as string);
-const ZONAL_KEYS = ['r', 'c', 'i', 'a'];
+const ZONAL_KEYS = ['r', 'c', 'i', 'a'] as const;
+type ZKey = (typeof ZONAL_KEYS)[number];
 
 // Columns that get a multi-select filter in the header
 const FILTER_KEYS = ['pro_name', 'mun_name', 'bgy_name', 'fclass', 'smv_year'] as const;
@@ -55,8 +69,67 @@ const EMPTY_FILTERS: Filters = {
   mun_name: [],
   bgy_name: [],
   fclass: [],
+  
   smv_year: [],
 };
+
+// ----- Numeric filters for the zonal columns --------------------------------
+// Conditional: value <op> input.  Range: from <= value <= to (either side can be left empty)
+const NUM_OPS = [
+  { value: 'eq', label: 'Equal to' },
+  { value: 'ne', label: 'Not equal to' },
+  { value: 'gt', label: 'Greater than' },
+  { value: 'lt', label: 'Less than' },
+  { value: 'gte', label: 'Greater than or equal to' },
+  { value: 'lte', label: 'Less than or equal to' },
+] as const;
+type NumOp = (typeof NUM_OPS)[number]['value'];
+
+type NumFilter = {
+  mode: 'cond' | 'range';
+  op: NumOp;
+  value: number | '';
+  min: number | '';
+  max: number | '';
+};
+type NumFilters = Record<ZKey, NumFilter>;
+
+const EMPTY_NUM_FILTER: NumFilter = { mode: 'cond', op: 'eq', value: '', min: '', max: '' };
+const EMPTY_NUM_FILTERS: NumFilters = {
+  r: EMPTY_NUM_FILTER,
+  c: EMPTY_NUM_FILTER,
+  i: EMPTY_NUM_FILTER,
+  a: EMPTY_NUM_FILTER,
+};
+
+// A filter only applies once it has something to compare against
+const isNumActive = (f: NumFilter) =>
+  f.mode === 'cond' ? typeof f.value === 'number' : typeof f.min === 'number' || typeof f.max === 'number';
+
+// Roads without a value never match a numeric filter
+function matchNum(v: number | null, f: NumFilter): boolean {
+  if (v == null) return false;
+  if (f.mode === 'range') {
+    if (typeof f.min === 'number' && v < f.min) return false;
+    if (typeof f.max === 'number' && v > f.max) return false;
+    return true;
+  }
+  const t = f.value as number;
+  switch (f.op) {
+    case 'eq':
+      return v === t;
+    case 'ne':
+      return v !== t;
+    case 'gt':
+      return v > t;
+    case 'lt':
+      return v < t;
+    case 'gte':
+      return v >= t;
+    case 'lte':
+      return v <= t;
+  }
+}
 
 // Fields the global search looks at
 const SEARCH_FIELDS: (keyof SmvRow)[] = ['street', 'bgy_name', 'mun_name', 'pro_name', 'fclass'];
@@ -68,6 +141,7 @@ type Query = {
   smv: typeof emptySmv;
   search: string;
   filters: Filters;
+  numFilters: NumFilters;
   sortStatus: DataTableSortStatus<SmvRow>;
 };
 
@@ -76,6 +150,7 @@ const EMPTY_QUERY: Query = {
   smv: emptySmv,
   search: '',
   filters: EMPTY_FILTERS,
+  numFilters: EMPTY_NUM_FILTERS,
   sortStatus: DEFAULT_SORT,
 };
 
@@ -105,7 +180,11 @@ export default function DataTableSMV() {
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 250);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [numFilters, setNumFilters] = useState<NumFilters>(EMPTY_NUM_FILTERS);
   const [sortStatus, setSortStatus] = useState<DataTableSortStatus<SmvRow>>(DEFAULT_SORT);
+
+  const setNumFilter = (key: ZKey, next: NumFilter) =>
+    setNumFilters((cur) => ({ ...cur, [key]: next }));
 
   const setFilter = (key: FilterKey, values: string[]) =>
     setFilters((cur) => ({ ...cur, [key]: values }));
@@ -127,8 +206,8 @@ export default function DataTableSMV() {
 
   // ----- Deferred processing -------------------------------------------------
   const query = useMemo<Query>(
-    () => ({ smv, search: debouncedSearch, filters, sortStatus }),
-    [smv, debouncedSearch, filters, sortStatus]
+    () => ({ smv, search: debouncedSearch, filters, numFilters, sortStatus }),
+    [smv, debouncedSearch, filters, numFilters, sortStatus]
   );
   const deferred = useDeferredValue(query, EMPTY_QUERY);
   const processing = deferred !== query || loading; // true while loading or catching up
@@ -165,16 +244,24 @@ export default function DataTableSMV() {
       (k) => [k, new Set(deferred.filters[k])] as const
     );
 
+    // Zonal columns with a numeric filter that is filled in
+    const numActive = ZONAL_KEYS.filter((k) => isNumActive(deferred.numFilters[k])).map(
+      (k) => [k, deferred.numFilters[k]] as const
+    );
+
     return rows.filter((r) => {
       for (const [key, values] of active) {
         if (!values.has(String(r[key] ?? ''))) return false;
+      }
+      for (const [key, f] of numActive) {
+        if (!matchNum(r[key], f)) return false;
       }
       if (q && !SEARCH_FIELDS.some((k) => String(r[k] ?? '').toLowerCase().includes(q))) {
         return false;
       }
       return true;
     });
-  }, [rows, deferred.search, deferred.filters]);
+  }, [rows, deferred.search, deferred.filters, deferred.numFilters]);
 
   // Share the visible (filtered) rows with anything else that needs them (summary, map, export)
   useEffect(() => {
@@ -242,8 +329,17 @@ export default function DataTableSMV() {
         };
 
         // Zonal values: thousands separators, "-" when empty
-        if (ZONAL_KEYS.includes(accessor)) {
-          col.render = (r) => money(r[def.accessor] as number | null);
+        if ((ZONAL_KEYS as readonly string[]).includes(accessor)) {
+          const key = accessor as ZKey;
+          col.render = (r) => money(r[key]);
+          col.filtering = isNumActive(numFilters[key]);
+          col.filter = (
+            <NumberFilterInput
+              title={def.title}
+              value={numFilters[key]}
+              onChange={(next) => setNumFilter(key, next)}
+            />
+          );
         }
 
         // Filter inputs use the instant state so they respond immediately
@@ -267,7 +363,7 @@ export default function DataTableSMV() {
 
         return col;
       }),
-    [visible, filters, filterOptions]
+    [visible, filters, numFilters, filterOptions]
   );
 
   // Total width of the columns that are currently shown
@@ -357,14 +453,13 @@ export default function DataTableSMV() {
             fz="xs"
             verticalAlign="top"
             idAccessor="rowKey"
-            storeColumnsKey="smv-table-columns-v2"
+            storeColumnsKey="smv-table-columns-v3"
             defaultColumnProps={{
               noWrap: true,
               ellipsis: true, // long text is cut with "..." instead of spilling into the next column
               sortable: true,
               draggable: true,
               resizable: true, // drag the edge of a header to resize
-              //minWidth: 60,
             }}
             styles={{
               table: {
@@ -394,5 +489,85 @@ export default function DataTableSMV() {
         </Box>
       </Box>
     </Box>
+  );
+}
+
+// ----- Header filter for a zonal column: Conditional or Range -----------------
+function NumberFilterInput({
+  title,
+  value,
+  onChange,
+}: {
+  title: string;
+  value: NumFilter;
+  onChange: (next: NumFilter) => void;
+}) {
+  const set = (patch: Partial<NumFilter>) => onChange({ ...value, ...patch });
+  const num = (v: string | number) => (typeof v === 'number' ? v : '');
+
+  return (
+    <Stack gap="xs" w={220}>
+      <SegmentedControl
+        size="xs"
+        fullWidth
+        value={value.mode}
+        onChange={(m) => set({ mode: m as NumFilter['mode'] })}
+        data={[
+          { value: 'cond', label: 'Conditional' },
+          { value: 'range', label: 'Range' },
+        ]}
+      />
+
+      {value.mode === 'cond' ? (
+        <>
+          <Select
+            size="xs"
+            label={`${title} is`}
+            data={NUM_OPS.map(({ value: v, label }) => ({ value: v, label }))}
+            value={value.op}
+            onChange={(v) => v && set({ op: v as NumOp })}
+            allowDeselect={false}
+            comboboxProps={{ withinPortal: false }}
+          />
+          <NumberInput
+            size="xs"
+            label="Value"
+            placeholder="Enter a value"
+            hideControls
+            allowNegative={false}
+            thousandSeparator=","
+            value={value.value}
+            onChange={(v) => set({ value: num(v) })}
+          />
+        </>
+      ) : (
+        <Group gap="xs" wrap="nowrap" grow>
+          <NumberInput
+            size="xs"
+            label="From"
+            placeholder="Min"
+            hideControls
+            allowNegative={false}
+            thousandSeparator=","
+            value={value.min}
+            onChange={(v) => set({ min: num(v) })}
+          />
+          <NumberInput
+            size="xs"
+            label="To"
+            placeholder="Max"
+            hideControls
+            allowNegative={false}
+            thousandSeparator=","
+            value={value.max}
+            onChange={(v) => set({ max: num(v) })}
+          />
+        </Group>
+      )}
+
+      <Button size="compact-xs" variant="default" onClick={() => onChange(EMPTY_NUM_FILTER)}>
+        Clear
+      </Button>
+    </Stack>
   );
 }

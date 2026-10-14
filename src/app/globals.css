@@ -52,5 +52,11 @@ a {
   }
 }
 
+/* Maplibre */
+.maplibregl-canvas-container.maplibregl-interactive.poi-hover,
+.maplibregl-canvas-container.maplibregl-interactive.poi-hover:active,
+.maplibregl-canvas-container.maplibregl-interactive.poi-hover .maplibregl-canvas {
+  cursor: pointer !important;
+}
 
 

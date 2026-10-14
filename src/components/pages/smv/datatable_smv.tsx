@@ -14,9 +14,11 @@ import {
   TextInput,
 } from '@mantine/core';
 import { useDebouncedValue, useElementSize, useLocalStorage } from '@mantine/hooks';
-import { IconColumns3, IconSearch, IconX } from '@tabler/icons-react';
+import { IconColumns3, IconCurrentLocation, IconSearch, IconX } from '@tabler/icons-react';
 import { DataTable, type DataTableColumn, type DataTableSortStatus } from 'mantine-datatable';
-import { useSmvStore, emptySmv, type SmvRecord } from '@/stores/smv_stores';
+import { useSmvStore, emptySmv, emptyRadius, MIN_RADIUS_M, type SmvRecord } from '@/stores/smv_stores';
+import { useGlobalStore } from '@/stores/global_stores';
+import { smv_url } from '@/lib/config'; // adjust: import smv_url from wherever MapDataManagement gets it
 import { BORDER, HEADER_BG, HOVER_BG, NAVY, PANEL_BG } from '@/lib/theme_colors';
 
 // Record from the store plus a guaranteed-unique key. Zonal values are forced to numbers
@@ -26,8 +28,13 @@ type SmvRow = Omit<SmvRecord, 'r' | 'c' | 'i' | 'a'> & {
   c: number | null; // commercial
   i: number | null; // industrial
   a: number | null; // agricultural
+  distance_m: number | null; // shortest distance (meters) from the radius center to the road, only while a radius is active
   source: SmvRecord; // the original record (same object as in the store), used for row click / selection
 };
+
+// A radius filter that is fully filled in (center + distance)
+type ActiveRadius = { lat: number; lng: number; m: number };
+const DISTANCE_COL_WIDTH = 120;
 
 // Measured from the rendered table (fz="xs"); tweak if a little blank space remains
 const ROW_HEIGHT = 30.5;
@@ -44,6 +51,7 @@ const COLUMN_DEFS: {
   width: number;
   textAlign?: 'left' | 'right';
 }[] = [
+  { accessor: 'id', title: 'ID', width: 90, textAlign: 'right' },
   { accessor: 'street', title: 'Street', width: 260 },
   { accessor: 'bgy_name', title: 'Barangay', width: 170 },
   { accessor: 'mun_name', title: 'City / Municipality', width: 190 },
@@ -69,7 +77,6 @@ const EMPTY_FILTERS: Filters = {
   mun_name: [],
   bgy_name: [],
   fclass: [],
-  
   smv_year: [],
 };
 
@@ -132,9 +139,10 @@ function matchNum(v: number | null, f: NumFilter): boolean {
 }
 
 // Fields the global search looks at
-const SEARCH_FIELDS: (keyof SmvRow)[] = ['street', 'bgy_name', 'mun_name', 'pro_name', 'fclass'];
+const SEARCH_FIELDS: (keyof SmvRow)[] = ['id', 'street', 'bgy_name', 'mun_name', 'pro_name', 'fclass'];
 
 const DEFAULT_SORT: DataTableSortStatus<SmvRow> = { columnAccessor: 'street', direction: 'asc' };
+const DISTANCE_SORT: DataTableSortStatus<SmvRow> = { columnAccessor: 'distance_m', direction: 'asc' };
 
 // Everything that triggers heavy processing, bundled so it can be deferred as one unit
 type Query = {
@@ -143,6 +151,8 @@ type Query = {
   filters: Filters;
   numFilters: NumFilters;
   sortStatus: DataTableSortStatus<SmvRow>;
+  radius: ActiveRadius | null;
+  hits: Map<string, number> | null; // road id -> distance (m), from the server, while a radius is active
 };
 
 // Used for the very first render, so the loader paints before the heavy work starts
@@ -152,6 +162,8 @@ const EMPTY_QUERY: Query = {
   filters: EMPTY_FILTERS,
   numFilters: EMPTY_NUM_FILTERS,
   sortStatus: DEFAULT_SORT,
+  radius: null,
+  hits: null,
 };
 
 function uniqueSorted(values: (string | number | null | undefined)[]) {
@@ -176,12 +188,79 @@ export default function DataTableSMV() {
   // record highlighted in the table; compared by identity
   const selected = useSmvStore((s) => s.selectedSmv);
 
+  // Radius filter state lives in the store so the map can draw the circle / pick the center
+  const radius = useSmvStore((s) => s.radius);
+  const setRadius = useSmvStore((s) => s.setRadius);
+  const pickingCenter = useSmvStore((s) => s.pickingCenter);
+  const setPickingCenter = useSmvStore((s) => s.setPickingCenter);
+
   // ----- UI state (updates instantly) ---------------------------------------
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 250);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [numFilters, setNumFilters] = useState<NumFilters>(EMPTY_NUM_FILTERS);
   const [sortStatus, setSortStatus] = useState<DataTableSortStatus<SmvRow>>(DEFAULT_SORT);
+
+  // The radius filters as soon as the center (lat + lng) is set; the radius falls back to the minimum
+  const activeRadius = useMemo<ActiveRadius | null>(() => {
+    const { lat, lng, m } = radius;
+    if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+    return { lat, lng, m: typeof m === 'number' && m >= MIN_RADIUS_M ? m : MIN_RADIUS_M };
+  }, [radius]);
+
+  // Nearest first while a radius is active; back to the default order when it is cleared
+  const hasRadius = activeRadius !== null;
+  useEffect(() => {
+    setSortStatus(hasRadius ? DISTANCE_SORT : DEFAULT_SORT);
+  }, [hasRadius]);
+
+  const radiusTouched = radius.lat !== '' || radius.lng !== '' || radius.m !== MIN_RADIUS_M;
+
+  // Roads that touch the circle: the SERVER checks the real line geometry (ST_DWithin) and returns
+  // { id, distance_m } pairs, so long roads count even when their midpoint is far from the center
+  const scopeSmv = useGlobalStore((s) => s.auth?.scope_smv);
+  const [hits, setHits] = useState<Map<string, number> | null>(null);
+  const [hitsLoading, setHitsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!activeRadius || !scopeSmv) {
+      setHits(null);
+      setHitsLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        setHitsLoading(true);
+        const response = await fetch(smv_url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: scopeSmv, mode: 'smvradius', ...activeRadius }),
+          signal: controller.signal,
+        });
+        const data = await response.json();
+        if (!response.ok || !Array.isArray(data)) throw new Error(JSON.stringify(data));
+        setHits(
+          new Map(
+            data.map((h: { id: number | string; distance_m: number | string }) => [
+              String(h.id),
+              Number(h.distance_m),
+            ])
+          )
+        );
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        console.log(err);
+        setHits(new Map());
+      } finally {
+        if (!controller.signal.aborted) setHitsLoading(false);
+      }
+    }, 300); // wait while the user is still typing / dragging
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [activeRadius, scopeSmv]);
 
   const setNumFilter = (key: ZKey, next: NumFilter) =>
     setNumFilters((cur) => ({ ...cur, [key]: next }));
@@ -191,7 +270,7 @@ export default function DataTableSMV() {
 
   // Which columns are displayed (remembered between visits)
   const [visible, setVisible] = useLocalStorage<string[]>({
-    key: 'smv-visible-columns-v1',
+    key: 'smv-visible-columns-v2',
     defaultValue: ALL_ACCESSORS,
   });
 
@@ -206,11 +285,11 @@ export default function DataTableSMV() {
 
   // ----- Deferred processing -------------------------------------------------
   const query = useMemo<Query>(
-    () => ({ smv, search: debouncedSearch, filters, numFilters, sortStatus }),
-    [smv, debouncedSearch, filters, numFilters, sortStatus]
+    () => ({ smv, search: debouncedSearch, filters, numFilters, sortStatus, radius: activeRadius, hits }),
+    [smv, debouncedSearch, filters, numFilters, sortStatus, activeRadius, hits]
   );
   const deferred = useDeferredValue(query, EMPTY_QUERY);
-  const processing = deferred !== query || loading; // true while loading or catching up
+  const processing = deferred !== query || loading || hitsLoading; // true while loading or catching up
 
   // ----- Data pipeline: rows -> filter -> search -> sort -> page ------------
   const rows: SmvRow[] = useMemo(
@@ -222,6 +301,7 @@ export default function DataTableSMV() {
         c: toNum(rec.c),
         i: toNum(rec.i),
         a: toNum(rec.a),
+        distance_m: null,
         source: rec,
       })),
     [deferred.smv]
@@ -249,19 +329,39 @@ export default function DataTableSMV() {
       (k) => [k, deferred.numFilters[k]] as const
     );
 
-    return rows.filter((r) => {
+    const rad = deferred.radius;
+
+    const out: SmvRow[] = [];
+    for (const r of rows) {
+      let ok = true;
       for (const [key, values] of active) {
-        if (!values.has(String(r[key] ?? ''))) return false;
+        if (!values.has(String(r[key] ?? ''))) {
+          ok = false;
+          break;
+        }
       }
+      if (!ok) continue;
+
       for (const [key, f] of numActive) {
-        if (!matchNum(r[key], f)) return false;
+        if (!matchNum(r[key], f)) {
+          ok = false;
+          break;
+        }
       }
-      if (q && !SEARCH_FIELDS.some((k) => String(r[k] ?? '').toLowerCase().includes(q))) {
-        return false;
+      if (!ok) continue;
+
+      if (q && !SEARCH_FIELDS.some((k) => String(r[k] ?? '').toLowerCase().includes(q))) continue;
+
+      if (rad) {
+        const d = deferred.hits?.get(String(r.id)); // not in the server's answer -> outside the circle
+        if (d === undefined) continue;
+        out.push({ ...r, distance_m: d });
+      } else {
+        out.push(r);
       }
-      return true;
-    });
-  }, [rows, deferred.search, deferred.filters, deferred.numFilters]);
+    }
+    return out;
+  }, [rows, deferred.search, deferred.filters, deferred.numFilters, deferred.radius, deferred.hits]);
 
   // Share the visible (filtered) rows with anything else that needs them (summary, map, export)
   useEffect(() => {
@@ -273,8 +373,10 @@ export default function DataTableSMV() {
     () => () => {
       setFilteredSmv(null);
       setSelectedSmv(null);
+      setPickingCenter(false);
+      setRadius(emptyRadius);
     },
-    [setFilteredSmv, setSelectedSmv]
+    [setFilteredSmv, setSelectedSmv, setPickingCenter, setRadius]
   );
 
   const sortedRows = useMemo(() => {
@@ -301,9 +403,21 @@ export default function DataTableSMV() {
     Math.floor((debouncedHeight - HEADER_HEIGHT - FOOTER_HEIGHT) / ROW_HEIGHT)
   );
 
+
+
   // Track the first visible row so resizing keeps your place in the data
   const [offset, setOffset] = useState(0);
   const page = Math.floor(offset / pageSize) + 1;
+
+  // When a road is selected (from the map or the table), show the page that contains its row
+  useEffect(() => {
+    if (!selected) return;
+    let idx = sortedRows.findIndex((r) => r.source === selected);
+    if (idx < 0) idx = sortedRows.findIndex((r) => String(r.id) === String(selected.id));
+    if (idx < 0) return; // filtered out of the table
+    setOffset(Math.floor(idx / pageSize) * pageSize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
 
   // Back to the start whenever the result set changes
   useEffect(() => {
@@ -316,9 +430,8 @@ export default function DataTableSMV() {
   }, [sortedRows, page, pageSize]);
 
   // ----- Columns -------------------------------------------------------------
-  const columns: DataTableColumn<SmvRow>[] = useMemo(
-    () =>
-      COLUMN_DEFS.map((def) => {
+  const columns: DataTableColumn<SmvRow>[] = useMemo(() => {
+    const cols: DataTableColumn<SmvRow>[] = COLUMN_DEFS.map((def) => {
         const accessor = def.accessor as string;
         const col: DataTableColumn<SmvRow> = {
           accessor: def.accessor,
@@ -362,9 +475,21 @@ export default function DataTableSMV() {
         }
 
         return col;
-      }),
-    [visible, filters, numFilters, filterOptions]
-  );
+    });
+
+    // Distance column only exists while a radius filter is applied to the data
+    if (deferred.radius) {
+      cols.push({
+        accessor: 'distance_m',
+        title: 'Distance (m)',
+        width: DISTANCE_COL_WIDTH,
+        textAlign: 'right',
+        render: (r) => (r.distance_m == null ? '' : Math.round(r.distance_m).toLocaleString()),
+      });
+    }
+
+    return cols;
+  }, [visible, filters, numFilters, filterOptions, deferred.radius]);
 
   // Total width of the columns that are currently shown
   const totalWidth = useMemo(
@@ -372,8 +497,8 @@ export default function DataTableSMV() {
       COLUMN_DEFS.filter((c) => visible.includes(c.accessor as string)).reduce(
         (sum, c) => sum + c.width,
         0
-      ),
-    [visible]
+      ) + (deferred.radius ? DISTANCE_COL_WIDTH : 0),
+    [visible, deferred.radius]
   );
 
   // Clicking a row marks it as selected (the map can read selectedSmv to zoom to it)
@@ -393,7 +518,7 @@ export default function DataTableSMV() {
       >
         <TextInput
           size="xs"
-          placeholder="Search street, barangay, city, province..."
+          placeholder="Search ID, street, barangay, city, province..."
           leftSection={<IconSearch size={14} />}
           rightSection={
             search ? (
@@ -435,6 +560,73 @@ export default function DataTableSMV() {
         </Menu>
       </Group>
 
+      {/* Radius filter: center (lat/lng or picked on the map) + distance in meters */}
+      <Group
+        gap="xs"
+        px="xs"
+        py={6}
+        wrap="nowrap"
+        bg={PANEL_BG}
+        style={{ flexShrink: 0, borderBottom: `1px solid ${BORDER}` }}
+      >
+        <NumberInput
+          size="xs"
+          w={110}
+          placeholder="Latitude"
+          hideControls
+          decimalScale={6}
+          value={radius.lat}
+          onChange={(v) => setRadius({ lat: typeof v === 'number' ? v : '' })}
+        />
+        <NumberInput
+          size="xs"
+          w={110}
+          placeholder="Longitude"
+          hideControls
+          decimalScale={6}
+          value={radius.lng}
+          onChange={(v) => setRadius({ lng: typeof v === 'number' ? v : '' })}
+        />
+        <NumberInput
+          size="xs"
+          w={100}
+          placeholder="Radius"
+          rightSection="m"
+          rightSectionWidth={24}
+          min={MIN_RADIUS_M}
+          clampBehavior="blur"
+          allowNegative={false}
+          hideControls
+          decimalScale={0}
+          thousandSeparator=","
+          value={radius.m}
+          onChange={(v) => setRadius({ m: typeof v === 'number' ? v : '' })}
+        />
+        <Button
+          size="xs"
+          variant={pickingCenter ? 'filled' : 'default'}
+          c={pickingCenter ? undefined : NAVY}
+          leftSection={<IconCurrentLocation size={14} />}
+          onClick={() => setPickingCenter(!pickingCenter)}
+        >
+          {pickingCenter ? 'Click the map…' : 'Pick on map'}
+        </Button>
+        {radiusTouched && (
+          <ActionIcon
+            size="sm"
+            variant="subtle"
+            color="gray"
+            aria-label="Clear radius"
+            onClick={() => {
+              setRadius(emptyRadius);
+              setPickingCenter(false);
+            }}
+          >
+            <IconX size={14} />
+          </ActionIcon>
+        )}
+      </Group>
+
       {/* Table area: its height decides how many rows fit */}
       <Box ref={ref} pos="relative" style={{ flex: 1, minHeight: 0 }}>
         <Box pos="absolute" inset={0}>
@@ -453,7 +645,7 @@ export default function DataTableSMV() {
             fz="xs"
             verticalAlign="top"
             idAccessor="rowKey"
-            storeColumnsKey="smv-table-columns-v3"
+            storeColumnsKey="smv-table-columns-v5"
             defaultColumnProps={{
               noWrap: true,
               ellipsis: true, // long text is cut with "..." instead of spilling into the next column

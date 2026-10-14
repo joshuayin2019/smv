@@ -15,6 +15,12 @@ export type SmvRecord = {
   a: number | string | null; // agricultural
 };
 
+// Radius filter inputs. "" = not filled in yet.
+// m (meters) defaults to (and never goes below) MIN_RADIUS_M, so picking a center is enough to start filtering.
+export const MIN_RADIUS_M = 5;
+export type SmvRadius = { lat: number | ""; lng: number | ""; m: number | "" };
+export const emptyRadius: SmvRadius = { lat: "", lng: "", m: MIN_RADIUS_M };
+
 // Stable empty array so deferred / memo comparisons don't churn
 export const emptySmv: SmvRecord[] = [];
 
@@ -23,7 +29,11 @@ type SmvStore = {
   loading: boolean;
   filteredSmv: SmvRecord[] | null; // rows currently visible after table filters (null = no table mounted)
   selectedSmv: SmvRecord | null;
+  radius: SmvRadius; // radius filter (center + distance), shared by the table and the map
+  pickingCenter: boolean; // true while the next map click should set the radius center
 
+  setRadius: (r: Partial<SmvRadius>) => void;
+  setPickingCenter: (v: boolean) => void;
   setSmv: (rows: SmvRecord[]) => void;
   setLoading: (v: boolean) => void;
   setFilteredSmv: (rows: SmvRecord[] | null) => void;
@@ -36,10 +46,22 @@ export const useSmvStore = create<SmvStore>((set) => ({
   loading: false,
   filteredSmv: null,
   selectedSmv: null,
+  radius: emptyRadius,
+  pickingCenter: false,
 
+  setRadius: (r) => set((st) => ({ radius: { ...st.radius, ...r } })),
+  setPickingCenter: (pickingCenter) => set({ pickingCenter }),
   setSmv: (smv) => set({ smv }),
   setLoading: (loading) => set({ loading }),
   setFilteredSmv: (filteredSmv) => set({ filteredSmv }),
   setSelectedSmv: (selectedSmv) => set({ selectedSmv }),
-  clear: () => set({ smv: emptySmv, loading: false, filteredSmv: null, selectedSmv: null }),
+  clear: () =>
+    set({
+      smv: emptySmv,
+      loading: false,
+      filteredSmv: null,
+      selectedSmv: null,
+      radius: emptyRadius,
+      pickingCenter: false,
+    }),
 }));

@@ -55,3 +55,39 @@ export async function loadSmv(scope: unknown) {
         return { error: err instanceof Error ? err.message : String(err) };
     }
 }
+
+
+
+// Roads that touch a circle: the real MultiLineString is checked, not a single point
+export async function loadSmvRadius(scope: unknown, lat: unknown, lng: unknown, m: unknown) {
+    try {
+        if (!Array.isArray(scope) || scope.length === 0) return [];
+
+        const latN = Number(lat);
+        const lngN = Number(lng);
+        const meters = Math.min(Math.max(Number(m), 1), 200_000); // clamp: 1 m .. 200 km
+        if (![latN, lngN, meters].every(Number.isFinite)) return { error: "invalid radius" };
+
+        const q = buildWhere(scope as SmvScopeItem[]);
+        if (!q) return [];
+
+        // bounding box in degrees, wide enough in longitude too
+        const delta = meters / 1000 / (111.32 * Math.cos((latN * Math.PI) / 180));
+
+        const n = q.params.length;
+        const sql = `
+            SELECT x.id,
+                   ST_Distance(x.geom::geography, c.pt::geography) AS distance_m
+            FROM data.smv x
+            CROSS JOIN (SELECT ST_SetSRID(ST_MakePoint($${n + 1}::float8, $${n + 2}::float8), 4326) AS pt) c
+            ${q.where}
+              AND x.geom && ST_Expand(c.pt, $${n + 3}::float8)
+              AND ST_DWithin(x.geom::geography, c.pt::geography, $${n + 4}::float8)
+        `;
+        const result = await conn.query(sql, [...q.params, lngN, latN, delta, meters]);
+        return result.rows;
+    } catch (err) {
+        console.warn("smv_controller radius:", err);
+        return { error: err instanceof Error ? err.message : String(err) };
+    }
+}

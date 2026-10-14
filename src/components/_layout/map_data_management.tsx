@@ -3,11 +3,11 @@ import { useGlobalStore } from "@/stores/global_stores";
 import { usePoiStore, PoiCollection } from "@/stores/poi_stores";
 import { useSmvStore } from "@/stores/smv_stores";
 
-import { basePath } from "@/lib/config";
+import { poi_url, smv_url  } from "@/lib/config";
 import { trackProgress } from "@/lib/progress";
 
-const poi_url = `${basePath}/api/pages/poi`;
-const smv_url = `${basePath}/api/pages/smv`;
+//const poi_url = `${basePath}/api/pages/poi`;
+//const smv_url = `${basePath}/api/pages/smv`;
 
 export default function MapDataManagement() {
     const userId = useGlobalStore((s) => s.auth?.user_id);

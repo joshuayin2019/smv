@@ -12,6 +12,7 @@ import PoiRadius from '../pages/poi/radius_poi';
 // SMV
 import SmvLayer from '../pages/smv/map_smv';
 import SmvPanel from '../pages/smv/panel_smv';
+import SmvRadiusLayer from '../pages/smv/SmvRadiusLayer';
 import { SmvHideTab } from '../pages/smv/panel_smv';
 
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
@@ -120,6 +121,7 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
 
             {/* SMV */}
             <SmvLayer {...smv} />
+            <SmvRadiusLayer />
           </Box>
         </Splitter.Pane>
 

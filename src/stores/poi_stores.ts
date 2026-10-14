@@ -44,9 +44,9 @@ export type PoiSelection = { properties: PoiProperties; lng: number; lat: number
 
 // Radius filter inputs. "" = not filled in yet.
 // km defaults to (and never goes below) MIN_RADIUS_KM, so picking a center is enough to start filtering.
-export const MIN_RADIUS_KM = 1;
-export type PoiRadius = { lat: number | ""; lng: number | ""; km: number | "" };
-export const emptyRadius: PoiRadius = { lat: "", lng: "", km: MIN_RADIUS_KM };
+export const MIN_RADIUS_M  = 5;
+export type PoiRadius = { lat: number | ""; lng: number | ""; m: number | "" };
+export const emptyRadius: PoiRadius = { lat: "", lng: "", m: MIN_RADIUS_M };
 
 type PoiState = {
     poi: PoiCollection;
