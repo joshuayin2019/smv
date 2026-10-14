@@ -43,7 +43,7 @@ const adminUser = (username: string): Auth => ({
   fullname: "Admin",
   role: "admin",
   scope_poi: ADMIN_SCOPE,
-  scope_zonalvalue: ADMIN_SCOPE,
+  scope_smv: ADMIN_SCOPE,
   scope_psa: ADMIN_SCOPE,
 });
 
@@ -53,7 +53,7 @@ const toAuth = (row: any): Auth => ({
   fullname: row.full_name,
   role: row.role,
   scope_poi: row.scope_poi,
-  scope_zonalvalue: row.scope_zonalvalue,
+  scope_smv: row.scope_smv,
   scope_psa: row.scope_psa,
 });
 

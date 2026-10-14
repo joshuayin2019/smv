@@ -11,7 +11,7 @@ export interface Auth {
   fullname: string;
   role: string;
   scope_poi: Scope[];
-  scope_zonalvalue: Scope[];
+  scope_smv: Scope[];
   scope_psa: Scope[];
 }
 
