@@ -1,10 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActionIcon,
   Box,
+  Button,
   Checkbox,
   CloseButton,
+  Collapse,
   Group,
   Paper,
   Slider,
@@ -13,23 +15,40 @@ import {
   Text,
   Tooltip,
 } from "@mantine/core";
-import { IconStack2Filled } from "@tabler/icons-react";
+import { IconChevronDown, IconStack2Filled } from "@tabler/icons-react";
 import { useMapStore } from "@/stores/map_stores";
 import { ACCENT, BORDER, NAVY, NAVY_DEEP } from "@/lib/theme_colors";
-import { ZONALS } from "@/components/pages/smv/map_smv"; // adjust to where map_smv.tsx lives
+import { ZONALS, MIN_ZOOM, overviewColor } from "@/components/pages/smv/map_smv"; // adjust path
 
 const POSITION = { position: "absolute", top: 10, right: 10, zIndex: 3 } as const;
 
 export default function LayerControl() {
-  const [opened, setOpened] = useState(false); // collapsed by default; use true to start expanded
+  const [opened, setOpened] = useState(false); // whole panel
+  const [smvOpen, setSmvOpen] = useState(true); // SMV section
 
+  const map = useMapStore((s) => s.map);
   const smv = useMapStore((s) => s.smv);
   const poiVisible = useMapStore((s) => s.poiVisible);
   const setSmv = useMapStore((s) => s.setSmv);
   const toggleZonal = useMapStore((s) => s.toggleZonal);
   const setPoiVisible = useMapStore((s) => s.setPoiVisible);
 
-  // Collapsed: just the icon button, in the same navy as the title bar
+  // true while the map shows the single-color SMV overview (zoom < MIN_ZOOM).
+  // Storing a boolean means React only re-renders when the mode actually flips.
+  const [overview, setOverview] = useState(true);
+  useEffect(() => {
+    if (!map) return;
+    const update = () => setOverview(map.getZoom() < MIN_ZOOM);
+    update();
+    map.on("zoom", update);
+    return () => {
+      map.off("zoom", update);
+    };
+  }, [map]);
+
+  const overviewSwatch = overviewColor(smv.enabled);
+
+  // Collapsed: just the icon button
   if (!opened) {
     return (
       <Tooltip label="Layers" position="left" withArrow>
@@ -52,14 +71,13 @@ export default function LayerControl() {
     );
   }
 
-  // Expanded: same look as the POI Details window
   return (
     <Paper
       withBorder
       radius="md"
       shadow="lg"
       bg="white"
-      w={220}
+      w={230}
       style={{
         ...POSITION,
         overflow: "hidden",
@@ -90,7 +108,6 @@ export default function LayerControl() {
         />
       </Group>
 
-      {/* Body */}
       <Box p="sm">
         <Stack gap="xs">
           <Switch
@@ -102,17 +119,73 @@ export default function LayerControl() {
             onChange={(e) => setPoiVisible(e.currentTarget.checked)}
           />
 
-          <Switch
-            size="xs"
-            color={NAVY}
-            label="SMV"
-            styles={{ label: { color: NAVY, fontWeight: 500 } }}
-            checked={smv.visible}
-            onChange={(e) => setSmv({ visible: e.currentTarget.checked })}
-          />
+          {/* SMV row: switch + collapse arrow */}
+          <Group justify="space-between" wrap="nowrap">
+            <Switch
+              size="xs"
+              color={NAVY}
+              label="SMV"
+              styles={{ label: { color: NAVY, fontWeight: 500 } }}
+              checked={smv.visible}
+              onChange={(e) => setSmv({ visible: e.currentTarget.checked })}
+            />
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              aria-label={smvOpen ? "Collapse SMV options" : "Expand SMV options"}
+              onClick={() => setSmvOpen((o) => !o)}
+            >
+              <IconChevronDown
+                size={14}
+                style={{
+                  transform: smvOpen ? "rotate(180deg)" : "none",
+                  transition: "transform 150ms ease",
+                }}
+              />
+            </ActionIcon>
+          </Group>
 
-          {smv.visible && (
+          <Collapse expanded={smv.visible && smvOpen}>
             <Stack gap={6} pl="md">
+              {/* Mode note: explains why the map color may differ from the swatches */}
+              {overview ? (
+                <Box p={6} style={{ background: "#f1f3f5", borderRadius: 4 }}>
+                  <Group gap={6} wrap="nowrap" align="flex-start">
+                    <span
+                      style={{
+                        width: 12,
+                        height: 3,
+                        marginTop: 6,
+                        flexShrink: 0,
+                        borderRadius: 2,
+                        background: overviewSwatch,
+                      }}
+                    />
+                    <Text fz={11} c={NAVY} lh={1.35}>
+                      Overview: one color for every road that has a value in a checked type.
+                    </Text>
+                  </Group>
+                  <Button
+                    mt={4}
+                    size="compact-xs"
+                    variant="light"
+                    fullWidth
+                    onClick={() => map?.easeTo({ zoom: MIN_ZOOM, duration: 600 })}
+                  >
+                    Zoom in to see type colors
+                  </Button>
+                </Box>
+              ) : (
+                <Text fz={11} c="dimmed">
+                  Colored by zonal type
+                </Text>
+              )}
+
+              <Text fz={11} fw={600} c={NAVY}>
+                {overview ? "Show roads with:" : "Zonal types"}
+              </Text>
+
               {ZONALS.map((z) => (
                 <Checkbox
                   key={z.key}
@@ -127,6 +200,9 @@ export default function LayerControl() {
                           borderRadius: 2,
                           background: z.color,
                           display: "inline-block",
+                          // dimmed in overview: these colors are not what the map shows yet
+                          opacity: overview ? 0.35 : 1,
+                          transition: "opacity 150ms ease",
                         }}
                       />
                       <Text fz={12} c={NAVY}>
@@ -153,7 +229,7 @@ export default function LayerControl() {
                 label={(v) => `${Math.round(v * 100)}%`}
               />
             </Stack>
-          )}
+          </Collapse>
         </Stack>
       </Box>
     </Paper>

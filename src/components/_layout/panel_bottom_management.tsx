@@ -11,6 +11,8 @@ import PoiRadius from '../pages/poi/radius_poi';
 
 // SMV
 import SmvLayer from '../pages/smv/map_smv';
+import SmvPanel from '../pages/smv/panel_smv';
+import { SmvHideTab } from '../pages/smv/panel_smv';
 
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
@@ -66,6 +68,16 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             onHide={hidePanel}
           />
         );
+      
+      case 'Schedule of Market Value':
+        return (
+          <SmvPanel
+            onNormal={showNormal}
+            onFull={showFull}
+            onHide={hidePanel}
+          />
+        );
+
       case 'User Management':
         return <Title order={4}>User Management</Title>;
       default:
@@ -75,6 +87,8 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
 
   useEffect(() => {
     if (activePage === 'Point of Interest') {
+      setSizes(SIZES_NORMAL);
+    } else if(activePage === 'Schedule of Market Value'){
       setSizes(SIZES_NORMAL);
     }
   }, [activePage]);
@@ -116,8 +130,11 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
       </Splitter>
 
       {/* Show the tab only on Point of Interest, and only while the panel is hidden */}
-      {activePage === 'Point of Interest' && !isOpen && (
-        <PoiHideTab onShow={showNormal} />
+      {!isOpen && (
+        <>
+          {activePage === 'Point of Interest' && <PoiHideTab onShow={showNormal} />}
+          {activePage === 'Schedule of Market Value' && <SmvHideTab onShow={showNormal} />}
+        </>
       )}
     </Box>
   );

@@ -55,8 +55,23 @@ type NavSection = {
 // ---- Edit this config to change the menu -----------------------------------
 const SECTIONS: NavSection[] = [
   { label: 'Dashboard', items: [], link: true },
+  { label: 'Schedule of Market Value', items: [], link: true },
+  { label: 'Point of Interest', items: [], link: true },
   {
-    label: 'Schedule of Market Value',
+    label: 'Demographic Data',
+    items: [
+      { label: 'Barangay Class', icon: IconClipboardText },
+      { label: 'Number of Story of Building', icon: IconClipboardText },
+      { label: 'Population', icon: IconClipboardText },
+      { label: 'Type of Building', icon: IconClipboardText },
+      { label: 'Year Built of Buildings', icon: IconClipboardText },
+    ],
+  },
+
+  { 
+    label: 'User Management', items: [], link: true },
+    {
+    label: 'Example',
     items: [
       {
         label: 'ITEM 1',
@@ -87,19 +102,6 @@ const SECTIONS: NavSection[] = [
       { label: 'ITEM 2', icon: IconClipboardText },
     ],
   },
-  { label: 'Point of Interest', items: [], link: true },
-  {
-    label: 'Demographic Data',
-    items: [
-      { label: 'Barangay Class', icon: IconClipboardText },
-      { label: 'Number of Story of Building', icon: IconClipboardText },
-      { label: 'Population', icon: IconClipboardText },
-      { label: 'Type of Building', icon: IconClipboardText },
-      { label: 'Year Built of Buildings', icon: IconClipboardText },
-    ],
-  },
-
-  { label: 'User Management', items: [], link: true },
 ];
 // -----------------------------------------------------------------------------
 

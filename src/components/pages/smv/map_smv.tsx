@@ -11,7 +11,7 @@ type Expr = maplibregl.ExpressionSpecification;
 const MODE: "stacked" | "parallel" = "stacked";
 
 // Multicolor view starts here. Below it, the single-color overview is shown.
-const MIN_ZOOM = 16;
+export const MIN_ZOOM = 16; // exported so the layer control can tell which mode the map is in
 const SOURCE_MIN_ZOOM = 5;
 const SOURCE_MAX_ZOOM = 18; // tiles are reused (overzoomed) above this
 
@@ -35,6 +35,13 @@ const LOW_COLOR = "#6366f1";
 const DEFAULT_ENABLED: Record<string, boolean> = Object.fromEntries(
   ZONALS.map((z) => [z.key, true])
 );
+
+// Single source of truth for the overview color (used by the map layer and by the layer control legend):
+// exactly one type checked -> that type's color, otherwise the shared overview color
+export const overviewColor = (enabled: Record<string, boolean>) => {
+  const on = ZONALS.filter((z) => enabled[z.key]);
+  return on.length === 1 ? on[0].color : LOW_COLOR;
+};
 
 const SOURCE_ID = "smv";
 const LOW_ID = "smv-overview";
@@ -157,7 +164,7 @@ export default function SmvLayer({
         filter: lowFilter(DEFAULT_ENABLED) as any,
         layout: { "line-join": "round", "line-cap": "round" },
         paint: {
-          "line-color": LOW_COLOR,
+          "line-color": overviewColor(DEFAULT_ENABLED),
           "line-opacity": 1,
           "line-width": lowWidth as any,
         },
@@ -222,6 +229,9 @@ export default function SmvLayer({
     };
   }, [map, scopeKey]);
 
+
+
+
   // 2) Apply visibility, opacity and per-zonal toggles
   useEffect(() => {
     if (!map || !scopeSmv) return;
@@ -232,6 +242,7 @@ export default function SmvLayer({
       map.setLayoutProperty(LOW_ID, "visibility", visible && anyOn ? "visible" : "none");
       map.setFilter(LOW_ID, lowFilter(enabled) as any);
       map.setPaintProperty(LOW_ID, "line-opacity", opacity);
+      map.setPaintProperty(LOW_ID, "line-color", overviewColor(enabled)); // follows the checked types
     }
 
     // Multicolor layers
@@ -258,6 +269,40 @@ export default function SmvLayer({
       if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
     };
   }, [map]);
+
+
+  // 4) Keep the SMV layers above the basemap but below the POI layers
+    useEffect(() => {
+      if (!map || !scopeSmv) return;
+
+      // bottom -> top; the first zonal ends up on top of the SMV layers
+      const order = [LOW_ID, ...[...SMV_LAYER_IDS].reverse()];
+      const POI_BOTTOM = "poi-group-all"; // lowest POI layer (added by PoiLayer)
+
+      const place = () => {
+        const style = map.getStyle();
+        if (!style) return; // map was already removed
+        const ids = style.layers.map((l) => l.id);
+        if (!ids.includes(SMV_LAYER_IDS[0])) return; // SMV layers not added yet
+
+        const before = ids.includes(POI_BOTTOM) ? POI_BOTTOM : undefined;
+
+        // already in place -> stop, so moveLayer doesn't re-trigger the events forever
+        const topSmv = ids.indexOf(SMV_LAYER_IDS[0]);
+        if (before ? topSmv + 1 === ids.indexOf(before) : topSmv === ids.length - 1) return;
+
+        order.forEach((id) => map.getLayer(id) && map.moveLayer(id, before));
+      };
+
+      place();
+      map.on("styledata", place);
+      map.on("idle", place); // fires after every render, so it also catches layers added later by PoiLayer
+
+      return () => {
+        map.off("styledata", place);
+        map.off("idle", place);
+      };
+    }, [map, scopeKey]);
 
   return null;
 }
