@@ -9,29 +9,37 @@ type Expr = maplibregl.ExpressionSpecification;
 /* ---------------- Config ---------------- */
 
 const MODE: "stacked" | "parallel" = "stacked";
+
+// Multicolor view starts here. Below it, the single-color overview is shown.
 const MIN_ZOOM = 16;
+const SOURCE_MIN_ZOOM = 5;
+const SOURCE_MAX_ZOOM = 18; // tiles are reused (overzoomed) above this
 
 // Keep the order: the first zonal ends up on top
-const ZONALS = [
+export const ZONALS = [
   { key: "r", label: "Residential", color: "#22c55e" },
   { key: "c", label: "Commercial", color: "#3b82f6" },
   { key: "i", label: "Industrial", color: "#f59e0b" },
   { key: "a", label: "Agricultural", color: "#a855f7" },
 ];
 
-// [zoom, pixels per step]
+// [zoom, pixels per step] for the multicolor view
 const WIDTH_STOPS: [number, number][] = [
   [16, 4],
   [21, 6],
 ];
+
+// Overview (zoom 5 to 15) style
+const LOW_COLOR = "#6366f1";
 
 const DEFAULT_ENABLED: Record<string, boolean> = Object.fromEntries(
   ZONALS.map((z) => [z.key, true])
 );
 
 const SOURCE_ID = "smv";
+const LOW_ID = "smv-overview";
 const layerId = (key: string) => `smv-${key}`;
-const SMV_LAYER_IDS = ZONALS.map((z) => layerId(z.key));
+const SMV_LAYER_IDS = ZONALS.map((z) => layerId(z.key)); // clickable layers
 
 /* ---------------- Expression helpers ---------------- */
 
@@ -65,6 +73,34 @@ function offsetFor(idx: number, enabled: Record<string, boolean>): Expr | number
   const centered: Expr = ["-", before, ["/", ["-", total, 1], 2]];
   return zoomPx(centered);
 }
+
+/* ---------------- Overview helpers (zoom 5 to 15) ---------------- */
+
+// Bigger roads are drawn thicker
+const classFactor: Expr = [
+  "match",
+  ["get", "fclass"],
+  ["motorway", "motorway_link", "trunk", "trunk_link"], 2,
+  ["primary", "primary_link"], 1.6,
+  ["secondary", "secondary_link"], 1.3,
+  ["tertiary", "tertiary_link"], 1.1,
+  0.8,
+] as unknown as Expr;
+
+const lowWidth: Expr = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  5, ["*", classFactor, 0.6],
+  10, ["*", classFactor, 1.2],
+  MIN_ZOOM, ["*", classFactor, 2.5],
+] as unknown as Expr;
+
+// Only roads that have a value in at least one enabled zonal type
+const lowFilter = (enabled: Record<string, boolean>): Expr =>
+  ["any", ...ZONALS.filter((z) => enabled[z.key]).map((z) => isActive(z.key))] as unknown as Expr;
+
+/* ---------------- Misc helpers ---------------- */
 
 const tilesUrl = (scope: Scope[]) =>
   `${window.location.origin}${basePath}/api/pages/smv/tile/{z}/{x}/{y}?scope=${encodeURIComponent(
@@ -106,8 +142,25 @@ export default function SmvLayer({
       map.addSource(SOURCE_ID, {
         type: "vector",
         tiles: [url],
-        minzoom: 8,
-        maxzoom: 18,
+        minzoom: SOURCE_MIN_ZOOM,
+        maxzoom: SOURCE_MAX_ZOOM,
+      });
+
+      // Overview layer goes first so the multicolor layers draw above it
+      map.addLayer({
+        id: LOW_ID,
+        type: "line",
+        source: SOURCE_ID,
+        "source-layer": "smv", // must match the name in ST_AsMVT
+        minzoom: SOURCE_MIN_ZOOM,
+        maxzoom: MIN_ZOOM, // hidden from MIN_ZOOM up
+        filter: lowFilter(DEFAULT_ENABLED) as any,
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": LOW_COLOR,
+          "line-opacity": 1,
+          "line-width": lowWidth as any,
+        },
       });
 
       // Add from last to first so the first zonal draws on top
@@ -117,7 +170,7 @@ export default function SmvLayer({
           id: layerId(z.key),
           type: "line",
           source: SOURCE_ID,
-          "source-layer": "smv", // must match the name in ST_AsMVT
+          "source-layer": "smv",
           minzoom: MIN_ZOOM,
           filter: isActive(z.key) as any,
           layout: { "line-join": "round", "line-cap": "round" },
@@ -131,6 +184,7 @@ export default function SmvLayer({
       }
     }
 
+    // Popup + pointer only on the multicolor layers (they carry the full attributes)
     const onClick = (e: maplibregl.MapMouseEvent) => {
       const f = map.queryRenderedFeatures(e.point, { layers: SMV_LAYER_IDS })[0];
       if (!f) return;
@@ -147,7 +201,7 @@ export default function SmvLayer({
         .setLngLat(e.lngLat)
         .setHTML(
           `<strong>${esc(p.street ?? "(no street name)")}</strong><br/>
-           ${esc(p.barangay)}, ${esc(p.city)}<br/>
+           ${esc(p.bgy_name)}, ${esc(p.mun_name)}, ${esc(p.pro_name)}<br/>
            Class: ${esc(p.fclass ?? "-")} &middot; SMV year: ${esc(p.smv_year ?? "-")}
            <div style="margin-top:6px">${rows || "No zonal values"}</div>`
         )
@@ -172,6 +226,15 @@ export default function SmvLayer({
   useEffect(() => {
     if (!map || !scopeSmv) return;
 
+    // Overview layer
+    if (map.getLayer(LOW_ID)) {
+      const anyOn = ZONALS.some((z) => enabled[z.key]);
+      map.setLayoutProperty(LOW_ID, "visibility", visible && anyOn ? "visible" : "none");
+      map.setFilter(LOW_ID, lowFilter(enabled) as any);
+      map.setPaintProperty(LOW_ID, "line-opacity", opacity);
+    }
+
+    // Multicolor layers
     ZONALS.forEach((z, idx) => {
       const id = layerId(z.key);
       if (!map.getLayer(id)) return;
@@ -191,7 +254,7 @@ export default function SmvLayer({
     if (!map) return;
     return () => {
       if (!map.getStyle()) return; // map was already removed
-      SMV_LAYER_IDS.forEach((id) => map.getLayer(id) && map.removeLayer(id));
+      [LOW_ID, ...SMV_LAYER_IDS].forEach((id) => map.getLayer(id) && map.removeLayer(id));
       if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
     };
   }, [map]);

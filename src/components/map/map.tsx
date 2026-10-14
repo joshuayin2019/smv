@@ -5,6 +5,7 @@ import type { ErrorEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Loader, Stack, Text } from "@mantine/core";
 import { useMapStore } from "@/stores/map_stores";
+import LayerControl from "./layer_control";
 
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
 
@@ -114,6 +115,9 @@ export default function Map({ active = true }: { active?: boolean }) {
           )}
         </Stack>
       )}
+
+      <LayerControl />
+
 
       <div
         style={{

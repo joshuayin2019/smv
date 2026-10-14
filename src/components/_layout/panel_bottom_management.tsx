@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import dynamic from 'next/dynamic';
-import { Box, Button, Splitter, Title, type SplitterProps } from '@mantine/core';
+import { Box, Splitter, Title, type SplitterProps } from '@mantine/core';
 import { useGlobalStore } from '@/stores/global_stores';
+import { useMapStore } from '@/stores/map_stores';
 
 import PoiLayer from '../pages/poi/map_poi';
 import PoiPanel from '../pages/poi/panel_poi';
 import { PoiHideTab } from '../pages/poi/panel_poi';
 import PoiRadius from '../pages/poi/radius_poi';
 
-//SMV
+// SMV
 import SmvLayer from '../pages/smv/map_smv';
-
 
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
@@ -31,6 +31,10 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
   const { showMap } = props;
   const { activePage } = useGlobalStore();
 
+  // layer control state (toggled from the LayerControl panel inside the map)
+  const smv = useMapStore((s) => s.smv);
+  const poiVisible = useMapStore((s) => s.poiVisible);
+
   const [sizes, setSizes] = useState<Sizes>(SIZES_HIDDEN);
   const [dragging, setDragging] = useState(false);
 
@@ -44,7 +48,6 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
   const showNormal = () => setSizes(SIZES_NORMAL);
   const showFull = () => setSizes(SIZES_FULL);
   const hidePanel = () => setSizes(SIZES_HIDDEN);
-  const togglePanel = () => (isOpen ? hidePanel() : showNormal());
 
   // Animate button-driven changes, but not while the handle is being dragged
   const paneStyle = {
@@ -98,12 +101,11 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             <Map active={showMap} />
 
             {/* POI */}
-            <PoiLayer mapPaneRef={mapPaneRef} />
+            <PoiLayer mapPaneRef={mapPaneRef} visible={poiVisible} />
             <PoiRadius />
 
             {/* SMV */}
-            <SmvLayer />
-            
+            <SmvLayer {...smv} />
           </Box>
         </Splitter.Pane>
 

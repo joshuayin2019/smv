@@ -81,6 +81,17 @@ const ROUTE_ALT_COLOR = "#868e96"; // alternative routes
 const ROUTE_FIT_PADDING = 80; // px around the routes when zooming to them
 const ROUTE_FIT_MAXZOOM = 17;
 
+// every layer this component owns, so the layer control can show/hide them together
+const POI_LAYER_IDS = [
+  ...LEVELS.flatMap((l) => [`poi-group-${l.level}`, `poi-group-label-${l.level}`]),
+  POI_LAYER,
+  SELECTED_PULSE_LAYER,
+  SELECTED_ICON_LAYER,
+  ROUTE_CASING_LAYER,
+  ROUTE_LINE_LAYER,
+  ROUTE_POINT_LAYER,
+];
+
 // zoom range of the level that comes after LEVELS[index]
 // (all -> reg -> pro -> mun -> bgy -> individual POIs)
 function nextLevelRange(index: number): { min: number; max: number } {
@@ -213,9 +224,11 @@ type PoiLayerProps = {
   // The element that shows the map (the top splitter pane). Its height is the visible map height;
   // anything the canvas has beyond that is hidden behind the bottom panel.
   mapPaneRef?: RefObject<HTMLElement | null>;
+  // Layer control toggle: hides every POI and route layer when false
+  visible?: boolean;
 };
 
-export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
+export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) {
   const activePage = useGlobalStore((s) => s.activePage);
   const map = useMapStore((s) => s.map);
   const poi = usePoiStore((s) => s.poi);
@@ -279,13 +292,13 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
 
       map.resize();
       const hidden = hiddenHeight(map, mapPaneRef?.current);
-      const visible = map.getContainer().clientHeight - hidden;
-      if (visible < MIN_MAP_HEIGHT) return; // map is (almost) hidden, e.g. panel at 100%
+      const visibleHeight = map.getContainer().clientHeight - hidden;
+      if (visibleHeight < MIN_MAP_HEIGHT) return; // map is (almost) hidden, e.g. panel at 100%
 
       const bounds = getPoiBounds(poi);
       if (bounds.isEmpty()) return;
 
-      const pad = Math.min(EXTENT_PADDING, visible / 4); // never larger than the map can take
+      const pad = Math.min(EXTENT_PADDING, visibleHeight / 4); // never larger than the map can take
       zoomPending.current = false;
       map.fitBounds(bounds, {
         // extra bottom padding = the strip of the canvas hidden behind the panel
@@ -608,6 +621,17 @@ export default function PoiLayer({ mapPaneRef }: PoiLayerProps) {
       }
     };
   }, [map]);
+
+  // layer control: show/hide all POI + route layers.
+  // Declared after the effects that add the layers, so they exist when this first runs.
+  useEffect(() => {
+    if (!map) return;
+    for (const id of POI_LAYER_IDS) {
+      if (map.getLayer(id)) {
+        map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
+      }
+    }
+  }, [map, visible]);
 
   // draw the route lines (selected one highlighted, alternatives in gray)
   useEffect(() => {
