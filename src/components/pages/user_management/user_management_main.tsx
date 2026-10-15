@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
   ActionIcon,
+  Alert,
   Avatar,
   Badge,
   Box,
@@ -11,6 +12,7 @@ import {
   Group,
   Loader,
   Menu,
+  Modal,
   MultiSelect,
   Pagination,
   Paper,
@@ -22,6 +24,7 @@ import {
   Title,
 } from '@mantine/core';
 import {
+  IconAlertCircle,
   IconDotsVertical,
   IconMail,
   IconMapPin,
@@ -31,6 +34,7 @@ import {
   IconSearch,
   IconTrash,
 } from '@tabler/icons-react';
+import { notifications } from '@mantine/notifications';
 import {
   EMPTY_FILTERS,
   SCOPE_TYPES,
@@ -43,9 +47,12 @@ import {
   type UserFilters,
   type UserStatus,
 } from './users.utils';
-import { basePath } from '@/lib/config';
+import { basePath, user_management_url } from '@/lib/config';
 import { useGlobalStore } from '@/stores/global_stores';
 import AddUser from './add_user';
+import EditUser from './edit_user';
+import ManageScope from './manage_scope';
+import { NAVY } from '@/lib/theme_colors';
 
 // Your global CSS sets overflow-y: hidden, so this page scrolls inside its own container.
 // Set this to the height of your top header (the "SMV Web Application" bar) so the container
@@ -77,7 +84,14 @@ const summarizeScopes = (scopes: Scope[]) =>
     (x) => x.count > 0,
   );
 
-function UserCard({ user }: { user: User }) {
+interface UserCardProps {
+  user: User;
+  onEdit: () => void;
+  onManageScope: () => void;
+  onDelete: () => void;
+}
+
+function UserCard({ user, onEdit, onManageScope, onDelete }: UserCardProps) {
   const scopeSummary = summarizeScopes(user.scopes);
 
   return (
@@ -122,9 +136,13 @@ function UserCard({ user }: { user: User }) {
               </ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
-              <Menu.Item leftSection={<IconPencil size={14} />}>Edit user</Menu.Item>
-              <Menu.Item leftSection={<IconMapPin size={14} />}>Manage scope</Menu.Item>
-              <Menu.Item color="red" leftSection={<IconTrash size={14} />}>
+              <Menu.Item leftSection={<IconPencil size={14} />} onClick={onEdit}>
+                Edit user
+              </Menu.Item>
+              <Menu.Item leftSection={<IconMapPin size={14} />} onClick={onManageScope}>
+                Manage scope
+              </Menu.Item>
+              <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={onDelete}>
                 Delete user
               </Menu.Item>
             </Menu.Dropdown>
@@ -141,7 +159,8 @@ function UserCard({ user }: { user: User }) {
         </Group>
         <Group gap="xs" wrap="nowrap">
           <IconPhone size={14} stroke={1.5} />
-          <Text size="xs">+{user.phone_number}</Text>
+          {/* works for old rows (no "+") and new rows (+639...) */}
+          <Text size="xs">+{(user.phone_number ?? '').replace(/^\+/, '')}</Text>
         </Group>
         <Group gap="xs" wrap="nowrap" align="flex-start">
           <IconMapPin size={14} stroke={1.5} style={{ marginTop: 2 }} />
@@ -177,13 +196,21 @@ export default function UserManagementMain() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0); // bump to refetch the list
 
   const [filters, setFilters] = useState<UserFilters>(EMPTY_FILTERS);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 250);
 
-  // Add Users
+  // Add / Edit / Manage scope / Delete
   const [isOpenAddModal, setIsOpenAddModal] = useState(false);
+  const [editUser, setEditUser] = useState<User | null>(null);
+  const [scopeUser, setScopeUser] = useState<User | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const reload = () => setReloadKey((k) => k + 1);
 
   // ---------- Load data ----------
   useEffect(() => {
@@ -213,7 +240,33 @@ export default function UserManagementMain() {
     })();
 
     return () => controller.abort();
-  }, [auth]);
+  }, [auth, reloadKey]);
+
+  // ---------- Delete ----------
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`${user_management_url}/${deleteTarget.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) {
+        setDeleteError(data.error ?? 'Failed to delete user');
+        return;
+      }
+      notifications.show({
+        title: 'User deleted',
+        message: `${deleteTarget.full_name} was deleted.`,
+        color: 'green',
+      });
+      setDeleteTarget(null);
+      reload();
+    } catch {
+      setDeleteError('Network error, please try again');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const hasActiveFilters = filters.status.length > 0 || search.trim().length > 0;
 
@@ -316,17 +369,26 @@ export default function UserManagementMain() {
             <Text c="red">{error}</Text>
           </Center>
         ) : loading ? (
-          <Center py="xl">
-            <Loader size="sm" />
+          <Center h="calc(100dvh - 300px)" mih={200}>
+            <Loader size="lg" type="bars" color={NAVY} />
           </Center>
         ) : visibleUsers.length === 0 ? (
           <Center py="xl">
             <Text c="dimmed">No users match your search or filters.</Text>
           </Center>
         ) : (
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 3, xl:4 }} spacing="md">
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 3, xl: 4 }} spacing="md">
             {visibleUsers.map((user) => (
-              <UserCard key={user.id} user={user} />
+              <UserCard
+                key={user.id}
+                user={user}
+                onEdit={() => setEditUser(user)}
+                onManageScope={() => setScopeUser(user)}
+                onDelete={() => {
+                  setDeleteError(null);
+                  setDeleteTarget(user);
+                }}
+              />
             ))}
           </SimpleGrid>
         )}
@@ -352,7 +414,48 @@ export default function UserManagementMain() {
         </Group>
       </Stack>
 
-      <AddUser setIsOpenAddModal={setIsOpenAddModal} isOpenAddModal={isOpenAddModal} />
+      <AddUser
+        setIsOpenAddModal={setIsOpenAddModal}
+        isOpenAddModal={isOpenAddModal}
+        onSaved={reload}
+      />
+
+      {editUser && (
+        <EditUser user={editUser} onClose={() => setEditUser(null)} onSaved={reload} />
+      )}
+
+      {scopeUser && (
+        <ManageScope user={scopeUser} onClose={() => setScopeUser(null)} onSaved={reload} />
+      )}
+
+      <Modal
+        opened={!!deleteTarget}
+        onClose={() => !deleting && setDeleteTarget(null)}
+        title="Delete user"
+        centered
+      >
+        <Text size="sm">
+          Delete <b>{deleteTarget?.full_name}</b> ({deleteTarget?.username})? This also removes all
+          of their scope. This can't be undone.
+        </Text>
+        {deleteError && (
+          <Alert
+            mt="md"
+            color="red"
+            variant="light"
+            icon={<IconAlertCircle size={18} />}
+            title={deleteError}
+          />
+        )}
+        <Group justify="flex-end" mt="lg">
+          <Button variant="default" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+            Cancel
+          </Button>
+          <Button color="red" onClick={handleDelete} loading={deleting}>
+            Delete
+          </Button>
+        </Group>
+      </Modal>
     </Box>
   );
 }

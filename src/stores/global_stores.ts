@@ -9,6 +9,7 @@ export interface Auth {
   user_id: number;
   username: string;
   fullname: string;
+  email: string; 
   role: string;
   scope_poi: Scope[];
   scope_smv: Scope[];

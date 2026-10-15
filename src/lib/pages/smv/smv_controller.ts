@@ -8,7 +8,11 @@ type SmvScopeItem = {
 const SELECT_SMV = `
     SELECT x.id, x.objectid, x.fid_ncr_ro, x.osm_id, x.code, x.fclass, x.reg_code, x.pro_code, 
 	x.mun_code, x.bgy_code, x.reg_name, x.pro_name, x.mun_name, 
-	x.bgy_name, x.district, x.zone, x.street, x.smv_year, x.r, x.c, x.i, x.a, x.flg, x.dist
+	x.bgy_name, x.district, x.zone, x.street, x.smv_year, x.r, x.c, x.i, x.a, x.flg, x.dist,
+    json_build_array(
+        ST_XMin(x.geom), ST_YMin(x.geom),
+        ST_XMax(x.geom), ST_YMax(x.geom)
+    ) AS bbox
 	FROM data.smv x
 `;
 

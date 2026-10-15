@@ -45,7 +45,7 @@ const DISTANCE_COL_WIDTH = 120;
 // Background of the selected row
 const SELECTED_BG = 'var(--mantine-color-blue-1)';
 
-// All columns the user can show/hide, with a fixed width in px
+// All columns the user can show/hide, with a default width in px (the user can resize them)
 const COLUMN_DEFS: {
   accessor: keyof PoiRow;
   title: string;
@@ -135,7 +135,6 @@ export default function DataTablePOI() {
   const setFilteredPoi = usePoiStore((s) => s.setFilteredPoi);
   const setSelectedPoi = usePoiStore((s) => s.setSelectedPoi);
   // record shown in the details window (clicked in the table or on the map); compared by identity
-  //const selectedProps = usePoiStore((s) => s.selectedPoi?.properties);
   const selectedPoi = usePoiStore((s) => s.selectedPoi);
   const selectedProps = selectedPoi?.properties;
 
@@ -354,16 +353,6 @@ export default function DataTablePOI() {
     return cols;
   }, [visible, filters, filterOptions, deferred.radius]);
 
-  // Total width of the columns that are currently shown
-  const totalWidth = useMemo(
-    () =>
-      COLUMN_DEFS.filter((c) => visible.includes(c.accessor as string)).reduce(
-        (sum, c) => sum + c.width,
-        0
-      ) + (deferred.radius ? DISTANCE_COL_WIDTH : 0),
-    [visible, deferred.radius]
-  );
-
   // Clicking a row opens the floating details window (same one the map uses)
   const handleRowClick = (row: PoiRow) => {
     if (row.lng == null || row.lat == null) return; // no point geometry -> nothing to show
@@ -520,17 +509,20 @@ export default function DataTablePOI() {
             fz="xs"
             verticalAlign="top"
             idAccessor="rowKey"
-            storeColumnsKey="poi-table-columns-v5"
+            // Bumped to v6: saved widths/order from the old fixed-width layout would clash
+            storeColumnsKey="poi-table-columns-v6"
             defaultColumnProps={{
               noWrap: true,
+              ellipsis: true, // long values are cut with "…" instead of widening the column
               sortable: true,
               draggable: true,
+              resizable: true, // drag the right edge of a header to resize
             }}
             styles={{
               table: {
-                tableLayout: 'fixed',
-                width: totalWidth, // wider than the panel -> horizontal scrollbar appears
-                minWidth: '100%', // narrower than the panel -> stretch, no blank strip
+                // No fixed table width / fixed layout: the table grows or shrinks with the
+                // column widths the user sets, and scrolls horizontally when wider than the panel
+                minWidth: '100%',
               },
               header: { backgroundColor: HEADER_BG, color: NAVY },
               pagination: { backgroundColor: PANEL_BG },

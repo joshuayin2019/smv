@@ -9,6 +9,7 @@ import {
   Collapse,
   Group,
   Paper,
+  SegmentedControl,
   Slider,
   Stack,
   Switch,
@@ -18,6 +19,7 @@ import {
 import { IconChevronDown, IconStack2Filled } from "@tabler/icons-react";
 import { useMapStore } from "@/stores/map_stores";
 import { ACCENT, BORDER, NAVY, NAVY_DEEP } from "@/lib/theme_colors";
+import { setBasemap, type Basemap } from "@/lib/basemap";
 import { ZONALS, MIN_ZOOM, overviewColor } from "@/components/pages/smv/map_smv"; // adjust path
 
 const POSITION = { position: "absolute", top: 10, right: 10, zIndex: 3 } as const;
@@ -25,6 +27,7 @@ const POSITION = { position: "absolute", top: 10, right: 10, zIndex: 3 } as cons
 export default function LayerControl() {
   const [opened, setOpened] = useState(false); // whole panel
   const [smvOpen, setSmvOpen] = useState(true); // SMV section
+  const [basemap, setBasemapState] = useState<Basemap>("streets");
 
   const map = useMapStore((s) => s.map);
   const smv = useMapStore((s) => s.smv);
@@ -32,6 +35,12 @@ export default function LayerControl() {
   const setSmv = useMapStore((s) => s.setSmv);
   const toggleZonal = useMapStore((s) => s.toggleZonal);
   const setPoiVisible = useMapStore((s) => s.setPoiVisible);
+
+  // Apply the basemap whenever the choice (or the map instance) changes
+  useEffect(() => {
+    if (!map) return;
+    setBasemap(map, basemap);
+  }, [map, basemap]);
 
   // true while the map shows the single-color SMV overview (zoom < MIN_ZOOM).
   // Storing a boolean means React only re-renders when the mode actually flips.
@@ -110,6 +119,22 @@ export default function LayerControl() {
 
       <Box p="sm">
         <Stack gap="xs">
+          {/* Basemap */}
+          <Text fz={11} fw={600} c={NAVY}>
+            Basemap
+          </Text>
+          <SegmentedControl
+            size="xs"
+            fullWidth
+            color={NAVY}
+            value={basemap}
+            onChange={(v) => setBasemapState(v as Basemap)}
+            data={[
+              { label: "OpenFreeMap", value: "streets" },
+              { label: "Satellite", value: "satellite" },
+            ]}
+          />
+
           <Switch
             size="xs"
             color={NAVY}

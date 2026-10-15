@@ -3,6 +3,7 @@ import { Box, Tabs, Loader } from '@mantine/core';
 import { useGlobalStore, DEFAULT_PAGE } from '@/stores/global_stores';
 
 import PanelBottomManagement from './panel_bottom_management';
+import { useEffect } from 'react';
 
 const UserManagementMain = dynamic(
   () => import('@/components/pages/user_management/user_management_main'),
@@ -17,6 +18,13 @@ export default function LayoutMain(_props: { navbarOpened?: boolean }) {
   const { activePage, setActivePage, auth } = useGlobalStore();
   const showMap = !HIDE_MAP_PAGES.includes(activePage);
   const isAdmin = auth?.role === 'admin';
+
+
+  useEffect(() => {
+    if (auth && !isAdmin && activePage === 'User Management') {
+      setActivePage(DEFAULT_PAGE);
+    }
+  }, [auth, isAdmin, activePage, setActivePage]);
 
   return (
     <Box pos="relative" h="calc(100dvh - 50px)" style={{ overflow: 'hidden' }}>

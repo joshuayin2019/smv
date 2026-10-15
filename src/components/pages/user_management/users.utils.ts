@@ -3,7 +3,7 @@
 
 export type UserStatus = 'active' | 'inactive';
 
-export const SCOPE_TYPES = ['poi', 'psa', 'smb'] as const;
+export const SCOPE_TYPES = ['poi', 'psa', 'smv'] as const;
 export type ScopeType = (typeof SCOPE_TYPES)[number];
 
 // ASSUMPTION: confirm these level numbers against your database.
@@ -29,7 +29,7 @@ export type ApiUser = {
   role?: string; // add to your SQL if you want it shown on the card
   scope_poi: RawScope[] | null;
   scope_psa: RawScope[] | null;
-  scope_smb: RawScope[] | null;
+  scope_smv: RawScope[] | null;
 };
 
 // One flattened scope row used by the UI
@@ -39,16 +39,16 @@ export type Scope = {
   code: string;
 };
 
-export type User = Omit<ApiUser, 'scope_poi' | 'scope_psa' | 'scope_smb'> & {
+export type User = Omit<ApiUser, 'scope_poi' | 'scope_psa' | 'scope_smv'> & {
   scopes: Scope[];
 };
 
 export function normalizeUser(raw: ApiUser): User {
-  const { scope_poi, scope_psa, scope_smb, ...rest } = raw;
+  const { scope_poi, scope_psa, scope_smv, ...rest } = raw;
   const byType: Record<ScopeType, RawScope[]> = {
     poi: scope_poi ?? [],
     psa: scope_psa ?? [],
-    smb: scope_smb ?? [],
+    smv: scope_smv ?? [],
   };
 
   const scopes: Scope[] = SCOPE_TYPES.flatMap((type) =>

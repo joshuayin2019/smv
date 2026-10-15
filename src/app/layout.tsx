@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { MantineProvider } from '@mantine/core';
 import { NavigationProgress } from '@mantine/nprogress';
+import { Notifications } from '@mantine/notifications';
 
 import "./globals.css";
 
@@ -8,6 +9,7 @@ import "./globals.css";
 import '@mantine/core/styles.css';
 import '@mantine/nprogress/styles.css';
 import 'mantine-datatable/styles.css';
+import '@mantine/notifications/styles.css';
 
 //Chart
 import '@mantine/charts/styles.css';
@@ -25,6 +27,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body>
         <MantineProvider >
           <NavigationProgress />
+          <Notifications />
           {children}
         </MantineProvider>
       </body>

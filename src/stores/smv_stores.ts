@@ -13,6 +13,7 @@ export type SmvRecord = {
   c: number | string | null; // commercial
   i: number | string | null; // industrial
   a: number | string | null; // agricultural
+  bbox?: number[];
 };
 
 // Radius filter inputs. "" = not filled in yet.

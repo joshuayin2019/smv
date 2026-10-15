@@ -23,7 +23,8 @@ import {
 
 
 import { useGlobalStore } from '@/stores/global_stores';
-import { usePoiStore } from '@/stores/poi_stores';
+//import { usePoiStore } from '@/stores/poi_stores';
+import { resetAllStores } from "@/stores/reset_stores";
 import { basePath } from "@/lib/config";
 
 
@@ -33,12 +34,15 @@ const NAVY_TEXT = '#0a1f6b';
 const ACCENT = '#00cc0a'; // active item marker f2b705
 const PANEL_BG = '#eef1f9';
 
-// TODO: replace with your real session / auth data (e.g. from your check-auth endpoint)
-const USER = {
-  name: 'Harriette Spoonlicker',
-  email: 'hspoonlicker@outlook.com',
-  image: '', // put an avatar URL here; falls back to the first letter of the name
-};
+// "Harriette Spoonlicker" -> "HS"
+const getInitials = (name: string) =>
+  name
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
 
 type NavItem = {
   label: string;
@@ -50,6 +54,7 @@ type NavSection = {
   label: string;
   items: NavItem[];
   link?: boolean; // true = plain button, no dropdown
+  adminOnly?: boolean; // true = only visible to admins
 };
 
 // ---- Edit this config to change the menu -----------------------------------
@@ -68,16 +73,15 @@ const SECTIONS: NavSection[] = [
     ],
   },
 
-  { 
-    label: 'User Management', items: [], link: true },
-    {
+  { label: 'User Management', items: [], link: true, adminOnly: true },
+  {
     label: 'Example',
     items: [
       {
         label: 'ITEM 1',
         icon: IconInfoCircle,
         children: [
-          { label: 'ITEM 1.1' }, 
+          { label: 'ITEM 1.1' },
           { label: 'ITEM 1.2' },
           { label: 'ITEM 1.3' },
           { label: 'ITEM 1.4' },
@@ -96,7 +100,6 @@ const SECTIONS: NavSection[] = [
           { label: 'ITEM 1.16' },
           { label: 'ITEM 1.17' },
           { label: 'ITEM 1.18' },
-        
         ],
       },
       { label: 'ITEM 2', icon: IconClipboardText },
@@ -192,9 +195,15 @@ function NavRow({
 }
 
 function NavbarFooter({
+  name,
+  subtitle,
+  image,
   onProfile,
   onLogout,
 }: {
+  name: string;
+  subtitle: string;
+  image?: string | null;
   onProfile: () => void;
   onLogout: () => void;
 }) {
@@ -211,16 +220,16 @@ function NavbarFooter({
         <Menu.Target>
           <UnstyledButton w="100%" p="xs" style={{ borderRadius: 6 }}>
             <Group wrap="nowrap" gap="sm">
-              <Avatar src={USER.image || null} radius="xl" size={40} color="blue">
-                {USER.name[0]}
+              <Avatar src={image || null} radius="xl" size={40} color="blue">
+                {getInitials(name)}
               </Avatar>
 
               <div style={{ flex: 1, minWidth: 0 }}>
                 <Text size="xs" fw={600} c={NAVY_TEXT} truncate>
-                  {USER.name}
+                  {name}
                 </Text>
                 <Text size="xs" c="dimmed" truncate>
-                  {USER.email}
+                  {subtitle}
                 </Text>
               </div>
 
@@ -249,18 +258,25 @@ function NavbarFooter({
 
 export default function LayoutNavbar() {
   const [openSection, setOpenSection] = useState<string | null>(SECTIONS[0].label);
-  const { clearAuth, setActivePage, activePage } = useGlobalStore();
-  const { clearPoi } = usePoiStore();
+  const { setActivePage, activePage, auth } = useGlobalStore(); //clearAuth
+  //const { clearPoi } = usePoiStore();
 
+  // hide admin-only sections from non-admin users
+  const isAdmin = auth?.role === 'admin';
+  const visibleSections = SECTIONS.filter((s) => !s.adminOnly || isAdmin);
+
+  // logged-in user shown in the footer
+  const displayName = auth?.fullname || auth?.username || '';
+ const displaySubtitle = auth?.email ?? '';
 
   const handleLogout = async () => {
     await fetch(`${basePath}/api/auth/logout`, {
       method: "POST",
       credentials: "include",
     });
-    clearAuth(); // the page switches back to <Login />
-    clearPoi(); //clear poi
-
+    //clearAuth(); // the page switches back to <Login />
+    //clearPoi(); //clear poi
+    resetAllStores();
 
   };
 
@@ -268,7 +284,7 @@ export default function LayoutNavbar() {
     <Box style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <ScrollArea type="auto" style={{ flex: 1, minHeight: 0 }}>
         <Stack gap={6} py="xs" pl="xs" pr={12}>
-          {SECTIONS.map((section) => {
+          {visibleSections.map((section) => {
             const opened = openSection === section.label;
             const expandable = section.items.length > 0;
 
@@ -348,7 +364,12 @@ export default function LayoutNavbar() {
         </Stack>
       </ScrollArea>
 
-      <NavbarFooter onProfile={() => setActivePage('Profile')} onLogout={handleLogout} />
+      <NavbarFooter
+        name={displayName}
+        subtitle={displaySubtitle}
+        onProfile={() => setActivePage('Profile')}
+        onLogout={handleLogout}
+      />
     </Box>
   );
 }

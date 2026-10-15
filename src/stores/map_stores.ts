@@ -30,3 +30,4 @@ export const useMapStore = create<MapState>((set) => ({
         set((s) => ({ smv: { ...s.smv, enabled: { ...s.smv.enabled, [key]: on } } })),
     setPoiVisible: (visible) => set({ poiVisible: visible }),
 }));
+
