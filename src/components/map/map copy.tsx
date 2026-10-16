@@ -7,13 +7,109 @@ import { Loader, Stack, Text } from "@mantine/core";
 import { useMapStore } from "@/stores/map_stores";
 import { isWebglSupported } from "@/lib/webgl";
 import LayerControl from "./layer_control";
+import MapWalk from "./map_walk";
 
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
 
 const WEBGL_MESSAGE =
   "Your browser doesn't support WebGL, or it is turned off. Turn on hardware acceleration or update your browser/graphics driver.";
 
+const MAP_STYLE = "https://tiles.openfreemap.org/styles/bright";
+
+// OpenFreeMap only hosts some font stacks. Anything else gets rerouted to a hosted one
+// so glyph requests don't 404.
+const FALLBACK_FONT = "Noto%20Sans%20Regular";
+const SUPPORTED_FONTS = /fonts\/(Noto%20Sans%20(Regular|Bold|Italic))\//;
+
+// Hide the basemap's own POI icons/labels so only the plain map + buildings remain.
+function hideBasemapPois(map: maplibregl.Map) {
+  const layers = map.getStyle().layers ?? [];
+  for (const layer of layers) {
+    const sourceLayer = (layer as any)["source-layer"];
+    if (sourceLayer === "poi" || layer.id.startsWith("poi")) {
+      map.setLayoutProperty(layer.id, "visibility", "none");
+    }
+  }
+}
+
+// The Bright style's road shield layers have filters that fail on the tile data
+// ("Expected value to be of type number, but found null"). Remove them.
+function removeBrokenShieldLayers(map: maplibregl.Map) {
+  const layers = map.getStyle().layers ?? [];
+  for (const layer of layers) {
+    if (/shield/i.test(layer.id) && map.getLayer(layer.id)) {
+      map.removeLayer(layer.id);
+    }
+  }
+}
+
+// Extruded 3D buildings, inserted beneath the first label layer.
+function add3dBuildings(map: maplibregl.Map) {
+  const layers = map.getStyle().layers ?? [];
+
+  let labelLayerId: string | undefined;
+  for (const layer of layers) {
+    if (layer.type === "symbol" && (layer.layout as any)?.["text-field"]) {
+      labelLayerId = layer.id;
+      break;
+    }
+  }
+
+  if (!map.getSource("openfreemap")) {
+    map.addSource("openfreemap", {
+      url: "https://tiles.openfreemap.org/planet",
+      type: "vector",
+    });
+  }
+
+  if (map.getLayer("3d-buildings")) return;
+
+  map.addLayer(
+    {
+      id: "3d-buildings",
+      source: "openfreemap",
+      "source-layer": "building",
+      type: "fill-extrusion",
+      minzoom: 15,
+      filter: ["!=", ["get", "hide_3d"], true],
+      paint: {
+        "fill-extrusion-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "render_height"],
+          0,
+          "lightgray",
+          200,
+          "royalblue",
+          400,
+          "lightblue",
+        ],
+        "fill-extrusion-height": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          15,
+          0,
+          16,
+          ["get", "render_height"],
+        ],
+        "fill-extrusion-base": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          15,
+          0,
+          16,
+          ["get", "render_min_height"],
+        ],
+      },
+    },
+    labelLayerId
+  );
+}
+
 export default function Map({ active = true }: { active?: boolean }) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const setMap = useMapStore((s) => s.setMap);
@@ -36,10 +132,23 @@ export default function Map({ active = true }: { active?: boolean }) {
     try {
       map = new maplibregl.Map({
         container: containerRef.current,
-        style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+        style: MAP_STYLE,
         center: [121, 14.6],
         zoom: 5,
+        // Normal flat map: default pitch (0), bearing (0) and max pitch (60).
+        // Walk mode raises the pitch limit itself while it is active.
         trackResize: false,
+        canvasContextAttributes: { antialias: true },
+        transformRequest: (url, resourceType) => {
+          if (
+            resourceType === "Glyphs" &&
+            url.startsWith("https://tiles.openfreemap.org/fonts/") &&
+            !SUPPORTED_FONTS.test(url)
+          ) {
+            return { url: url.replace(/fonts\/[^/]+\//, `fonts/${FALLBACK_FONT}/`) };
+          }
+          return undefined;
+        },
       });
     } catch (e: any) {
       setError(e?.message ?? WEBGL_MESSAGE);
@@ -48,10 +157,34 @@ export default function Map({ active = true }: { active?: boolean }) {
     }
     mapRef.current = map;
 
+    // Fullscreen: use the outer wrapper so the layer control, info panel and zoom label
+    // stay visible in fullscreen (the default would only fullscreen the map div).
+    map.addControl(
+      new maplibregl.FullscreenControl({
+        container: wrapperRef.current ?? undefined,
+      }),
+      "top-left"
+    );
+
+    // Locate the user: centers the map on their position and keeps tracking.
+    map.addControl(
+      new maplibregl.GeolocateControl({
+        positionOptions: { enableHighAccuracy: true },
+        trackUserLocation: true,
+        showUserLocation: true,
+        showAccuracyCircle: true,
+        fitBoundsOptions: { maxZoom: 17 },
+      }),
+      "top-left"
+    );
+
     const updateZoom = () => setZoom(map.getZoom().toFixed(1));
     map.on("zoom", updateZoom);
 
     map.on("load", () => {
+      removeBrokenShieldLayers(map);
+      hideBasemapPois(map);
+      add3dBuildings(map);
       updateZoom();
       setMap(map);
       setLoading(false);
@@ -104,7 +237,10 @@ export default function Map({ active = true }: { active?: boolean }) {
   }, [active]);
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+    <div
+      ref={wrapperRef}
+      style={{ position: "relative", width: "100%", height: "100%" }}
+    >
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
 
       {(loading || error) && (
@@ -135,8 +271,9 @@ export default function Map({ active = true }: { active?: boolean }) {
         </Stack>
       )}
 
-      {/* the layer control needs a working map, so hide it when there is none */}
+      {/* these need a working map, so hide them when there is none */}
       {!error && <LayerControl />}
+      {!error && <MapWalk />}
 
       <div
         style={{

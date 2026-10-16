@@ -1,10 +1,17 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MutableRefObject, ReactNode } from "react";
+import type { MutableRefObject, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import * as maplibregl from "maplibre-gl";
 import { ActionIcon, Badge, Box, Collapse, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
 import { useClipboard } from "@mantine/hooks";
-import { IconCheck, IconChevronDown, IconCopy, IconInfoCircle, IconWalk } from "@tabler/icons-react";
+import {
+  IconCheck,
+  IconChevronDown,
+  IconCopy,
+  IconGripHorizontal,
+  IconInfoCircle,
+  IconWalk,
+} from "@tabler/icons-react";
 import { useMapStore } from "@/stores/map_stores";
 import { useSmvStore } from "@/stores/smv_stores";
 import { ACCENT, BORDER, NAVY, NAVY_DEEP } from "@/lib/theme_colors";
@@ -29,9 +36,10 @@ const SMV_SOURCE = "smv"; // same id SmvLayer uses
 const BUILDING_LAYER = "3d-buildings";
 const ROAD_SEARCH_M = 60; // farther than this -> "no road nearby"
 const ROAD_SNAP_M = 8; // within this -> "on the road"
-const MIN_ROAD_ZOOM = 14; // normal mode: below this the tiles are too generalized
 
 const M_PER_DEG = 111320;
+
+const DRAG_THRESHOLD_PX = 6; // pointer must move this far before a press becomes a drag
 
 const MOVE_KEYS = new Set([
   "w", "a", "s", "d", "q", "e",
@@ -46,6 +54,8 @@ const BLOCKED_EVENTS = [
 
 /* ---------------- Types ---------------- */
 
+type Mode = "off" | "placing" | "walking";
+
 type RoadHit = { props: Record<string, any>; dist: number };
 
 type RoadInfo = {
@@ -57,15 +67,13 @@ type RoadInfo = {
   zonal: { key: string; label: string; color: string; value: number }[];
 };
 
-type RoadStatus = "ok" | "none" | "off" | "zoom";
+type RoadStatus = "ok" | "none" | "off";
 
 type Info = {
-  source: "walker" | "cursor" | "center";
   lat: number;
   lng: number;
   bearing: number;
   pitch: number;
-  zoom: number;
   roadStatus: RoadStatus;
   road: RoadInfo | null;
   buildingHeight: number | null;
@@ -199,47 +207,71 @@ function PadKey({
   );
 }
 
+// Banner shown at the top of the map
+function Banner({ children }: { children: ReactNode }) {
+  return (
+    <Box
+      style={{
+        position: "absolute",
+        top: 10,
+        left: "50%",
+        transform: "translateX(-50%)",
+        padding: "4px 10px",
+        borderRadius: 6,
+        background: "rgba(15, 23, 42, 0.75)",
+        color: "#fff",
+        fontSize: 12,
+        pointerEvents: "none",
+        zIndex: 3,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </Box>
+  );
+}
+
 /* ---------------- Component ---------------- */
 
 export default function MapWalk() {
   const map = useMapStore((s) => s.map);
   const clipboard = useClipboard({ timeout: 1200 });
 
-  const [walking, setWalking] = useState(false);
+  // off -> placing (choose a start point) -> walking
+  const [mode, setMode] = useState<Mode>("off");
+  const walking = mode === "walking";
+
   const [panelOpen, setPanelOpen] = useState(true);
   const [info, setInfo] = useState<Info | null>(null);
 
   const walkingRef = useRef(false);
   const walkerRef = useRef<Walker | null>(null);
+  const startRef = useRef<{ lng: number; lat: number } | null>(null);
   const keysRef = useRef(new Set<string>());
-  const hoverRef = useRef<maplibregl.LngLat | null>(null);
   const recCache = useRef<{ id: string; rec: any } | null>(null);
 
-  // Everything the info panel shows, for the current probe point
-  // (walker position while walking, otherwise the cursor, otherwise the map center)
+  // floating window position (null = default corner), relative to the map wrapper
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const panelDrag = useRef<{ dx: number; dy: number } | null>(null);
+
+  // dragging the walk icon onto the map
+  const iconDrag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  const suppressClick = useRef(false);
+  const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null);
+
+  // Begin walking from a chosen point
+  const startAt = useCallback((p: { lng: number; lat: number }) => {
+    startRef.current = { lng: p.lng, lat: p.lat };
+    setMode("walking");
+  }, []);
+
+  // Everything the info window shows, for the walker's current position
   const compute = useCallback((): Info | null => {
-    if (!map || !map.getStyle()) return null;
-
-    const walkingNow = walkingRef.current;
     const w = walkerRef.current;
+    if (!map || !map.getStyle() || !walkingRef.current || !w) return null;
 
-    let lng: number;
-    let lat: number;
-    let source: Info["source"];
-    if (walkingNow && w) {
-      lng = w.lng;
-      lat = w.lat;
-      source = "walker";
-    } else if (hoverRef.current) {
-      lng = hoverRef.current.lng;
-      lat = hoverRef.current.lat;
-      source = "cursor";
-    } else {
-      const c = map.getCenter();
-      lng = c.lng;
-      lat = c.lat;
-      source = "center";
-    }
+    const { lng, lat } = w;
 
     // Road
     let roadStatus: RoadStatus = "ok";
@@ -248,8 +280,6 @@ export default function MapWalk() {
 
     if (!map.getSource(SMV_SOURCE) || !smvState.visible) {
       roadStatus = "off";
-    } else if (!walkingNow && map.getZoom() < MIN_ROAD_ZOOM) {
-      roadStatus = "zoom";
     } else {
       const hit = nearestRoad(map, lng, lat);
       if (!hit || hit.dist > ROAD_SEARCH_M) {
@@ -283,69 +313,50 @@ export default function MapWalk() {
       }
     }
 
-    // Building at the crosshair (walking) or under the cursor
+    // Building at the crosshair
     let buildingHeight: number | null = null;
     if (map.getLayer(BUILDING_LAYER)) {
       const canvas = map.getCanvas();
-      const pt: [number, number] = walkingNow
-        ? [canvas.clientWidth / 2, canvas.clientHeight / 2]
-        : (() => {
-            const p = map.project([lng, lat]);
-            return [p.x, p.y];
-          })();
+      const pt: [number, number] = [canvas.clientWidth / 2, canvas.clientHeight / 2];
       const bf = map.queryRenderedFeatures(pt, { layers: [BUILDING_LAYER] })[0];
       const h = Number(bf?.properties?.render_height);
       buildingHeight = bf && Number.isFinite(h) ? h : null;
     }
 
     return {
-      source,
       lat,
       lng,
-      bearing: walkingNow && w ? w.bearing : map.getBearing(),
-      pitch: walkingNow && w ? w.pitch : map.getPitch(),
-      zoom: map.getZoom(),
+      bearing: w.bearing,
+      pitch: w.pitch,
       roadStatus,
       road,
       buildingHeight,
     };
   }, [map]);
 
-  // ----- Info panel in normal mode: follows the cursor and the camera -----
+  // ----- Placing: crosshair cursor, click the map to choose the start point, Esc cancels -----
   useEffect(() => {
-    if (!map) return;
-
-    let last = 0;
-    const onMove = (e: maplibregl.MapMouseEvent) => {
-      hoverRef.current = e.lngLat;
-      const now = performance.now();
-      if (now - last < 120) return;
-      last = now;
-      setInfo(compute());
-    };
-    const onOut = () => {
-      hoverRef.current = null;
-      setInfo(compute());
-    };
-    const onMoveEnd = () => {
-      if (walkingRef.current) return; // the walk loop refreshes the panel itself
-      setInfo(compute());
-    };
+    if (!map || mode !== "placing") return;
 
     const canvas = map.getCanvas();
-    map.on("mousemove", onMove);
-    map.on("moveend", onMoveEnd);
-    canvas.addEventListener("mouseout", onOut);
-    setInfo(compute());
+    const prevCursor = canvas.style.cursor;
+    canvas.style.cursor = "crosshair";
 
-    return () => {
-      map.off("mousemove", onMove);
-      map.off("moveend", onMoveEnd);
-      canvas.removeEventListener("mouseout", onOut);
+    const onClick = (e: maplibregl.MapMouseEvent) => startAt(e.lngLat);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMode("off");
     };
-  }, [map, compute]);
 
-  // ----- Keyboard (W A S D, Q E, arrows, Shift; Esc leaves walk mode) -----
+    map.on("click", onClick);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      map.off("click", onClick);
+      window.removeEventListener("keydown", onKey);
+      canvas.style.cursor = prevCursor;
+    };
+  }, [map, mode, startAt]);
+
+  // ----- Keyboard while walking (W A S D, Q E, arrows, Shift; Esc leaves walk mode) -----
   useEffect(() => {
     if (!walking) return;
 
@@ -358,7 +369,7 @@ export default function MapWalk() {
       if (isTyping(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
       const key = e.key.toLowerCase();
       if (key === "escape") {
-        setWalking(false);
+        setMode("off");
         return;
       }
       if (MOVE_KEYS.has(key)) {
@@ -385,7 +396,8 @@ export default function MapWalk() {
     walkingRef.current = walking;
     if (!map || !walking) return;
 
-    const start = map.getCenter();
+    // Start where the user placed the walker (fallback: map center)
+    const start = startRef.current ?? map.getCenter();
     const w: Walker = { lng: start.lng, lat: start.lat, bearing: map.getBearing(), pitch: WALK_PITCH };
     walkerRef.current = w;
 
@@ -406,7 +418,7 @@ export default function MapWalk() {
     // Drag to look around
     let drag: { x: number; y: number } | null = null;
     let dirty = true; // camera needs to be re-applied
-    let infoDirty = true; // info panel needs to be refreshed
+    let infoDirty = true; // info window needs to be refreshed
     const onDown = (e: PointerEvent) => {
       if (e.pointerType === "mouse" && e.button !== 0) return;
       drag = { x: e.clientX, y: e.clientY };
@@ -469,7 +481,7 @@ export default function MapWalk() {
         infoDirty = true;
       }
 
-      // Throttled panel refresh (runs after the camera has settled too)
+      // Throttled window refresh (runs after the camera has settled too)
       if (infoDirty && now - lastReport > 200) {
         lastReport = now;
         infoDirty = false;
@@ -493,6 +505,8 @@ export default function MapWalk() {
       walkingRef.current = false;
       const end = walkerRef.current;
       walkerRef.current = null;
+      startRef.current = null;
+      setInfo(null);
 
       // Leave walk mode: back to a normal flat map where you were standing.
       // jumpTo first (pitch is within the old limit), then restore the normal max pitch.
@@ -507,33 +521,160 @@ export default function MapWalk() {
     };
   }, [map, walking, compute]);
 
+  // Keep the floating window inside the map if the map was resized since it was last moved
+  useEffect(() => {
+    if (!walking) return;
+    const el = panelRef.current;
+    const parent = el?.offsetParent as HTMLElement | null;
+    if (!el || !parent) return;
+    setPos((p) =>
+      p && {
+        x: clamp(p.x, 0, Math.max(0, parent.clientWidth - el.offsetWidth)),
+        y: clamp(p.y, 0, Math.max(0, parent.clientHeight - el.offsetHeight)),
+      }
+    );
+  }, [walking]);
+
+  /* ----- Floating window: drag by the title bar ----- */
+
+  const onPanelDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest("button")) return; // let the collapse button work
+    const el = panelRef.current;
+    const parent = el?.offsetParent as HTMLElement | null;
+    if (!el || !parent) return;
+    const r = el.getBoundingClientRect();
+    const pr = parent.getBoundingClientRect();
+    panelDrag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    setPos({ x: r.left - pr.left, y: r.top - pr.top }); // switch from bottom-anchored to top/left
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onPanelMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = panelDrag.current;
+    const el = panelRef.current;
+    const parent = el?.offsetParent as HTMLElement | null;
+    if (!d || !el || !parent) return;
+    const pr = parent.getBoundingClientRect();
+    setPos({
+      x: clamp(e.clientX - pr.left - d.dx, 0, Math.max(0, pr.width - el.offsetWidth)),
+      y: clamp(e.clientY - pr.top - d.dy, 0, Math.max(0, pr.height - el.offsetHeight)),
+    });
+  };
+
+  const onPanelUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    panelDrag.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  /* ----- Walk button: click = pick a spot on the map, drag = drop the icon on the map ----- */
+
+  const onIconDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (mode === "walking") return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    iconDrag.current = { x: e.clientX, y: e.clientY, moved: false };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onIconMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = iconDrag.current;
+    if (!d) return;
+    if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < DRAG_THRESHOLD_PX) return;
+    d.moved = true;
+    setGhost({ x: e.clientX, y: e.clientY });
+  };
+
+  const onIconUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = iconDrag.current;
+    iconDrag.current = null;
+    setGhost(null);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    if (!d?.moved || !map) return;
+
+    suppressClick.current = true; // the click that follows a drag must not toggle the mode
+    const rect = map.getCanvas().getBoundingClientRect();
+    const inside =
+      e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+    if (inside) startAt(map.unproject([e.clientX - rect.left, e.clientY - rect.top]));
+  };
+
+  const onIconCancel = () => {
+    iconDrag.current = null;
+    setGhost(null);
+  };
+
+  const onIconClick = () => {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
+    }
+    setMode((m) => (m === "off" ? "placing" : "off"));
+  };
+
   if (!map) return null;
 
-  const sourceLabel =
-    info?.source === "walker" ? "Your position" : info?.source === "cursor" ? "Cursor" : "Map center";
+  const tooltip =
+    mode === "walking"
+      ? "Exit walk mode (Esc)"
+      : mode === "placing"
+        ? "Cancel (Esc)"
+        : "Walk around: click, then pick a spot. Or drag this icon onto the map";
 
   return (
     <>
       {/* Walk toggle */}
-      <Tooltip label={walking ? "Exit walk mode (Esc)" : "Walk around (first person)"} position="left" withArrow>
+      <Tooltip label={tooltip} position="left" withArrow>
         <ActionIcon
           size="lg"
           radius="md"
           aria-label="Walk mode"
-          onClick={() => setWalking((v) => !v)}
+          onClick={onIconClick}
+          onPointerDown={onIconDown}
+          onPointerMove={onIconMove}
+          onPointerUp={onIconUp}
+          onPointerCancel={onIconCancel}
           style={{
             position: "absolute",
+            top: 136,
             right: 10,
-            bottom: 40,
             zIndex: 3,
-            background: walking ? ACCENT : NAVY_DEEP,
+            background: mode === "off" ? NAVY_DEEP : ACCENT,
             color: "#fff",
+            borderTop: `3px solid ${ACCENT}`,
             boxShadow: "var(--mantine-shadow-lg)",
+            touchAction: "none",
           }}
         >
           <IconWalk size={20} />
         </ActionIcon>
       </Tooltip>
+
+      {/* Icon following the pointer while it is dragged to the map */}
+      {ghost && (
+        <Box
+          style={{
+            position: "fixed",
+            left: ghost.x - 17,
+            top: ghost.y - 17,
+            width: 34,
+            height: 34,
+            borderRadius: 8,
+            background: ACCENT,
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: "var(--mantine-shadow-lg)",
+            pointerEvents: "none",
+            zIndex: 1000,
+          }}
+        >
+          <IconWalk size={20} />
+        </Box>
+      )}
+
+      {mode === "placing" && (
+        <Banner>Click the map to choose where to start · or drag the walk icon onto the map · Esc cancel</Banner>
+      )}
 
       {walking && (
         <>
@@ -555,25 +696,7 @@ export default function MapWalk() {
             }}
           />
 
-          {/* Hint */}
-          <Box
-            style={{
-              position: "absolute",
-              top: 10,
-              left: "50%",
-              transform: "translateX(-50%)",
-              padding: "4px 10px",
-              borderRadius: 6,
-              background: "rgba(15, 23, 42, 0.75)",
-              color: "#fff",
-              fontSize: 12,
-              pointerEvents: "none",
-              zIndex: 3,
-              whiteSpace: "nowrap",
-            }}
-          >
-            W A S D move · Q / E or drag to look · Shift run · Esc exit
-          </Box>
+          <Banner>W A S D move · Q / E or drag to look · Shift run · Esc exit</Banner>
 
           {/* On-screen pad (touch / mouse) */}
           <Box
@@ -595,135 +718,155 @@ export default function MapWalk() {
             <PadKey k="s" label="S" keysRef={keysRef} />
             <PadKey k="d" label="D" keysRef={keysRef} />
           </Box>
+
+          {/* Floating, draggable location window (only while walking) */}
+          <Paper
+            ref={panelRef}
+            withBorder
+            radius="md"
+            shadow="lg"
+            bg="white"
+            w={250}
+            style={{
+              position: "absolute",
+              ...(pos ? { left: pos.x, top: pos.y } : { left: 10, bottom: 40 }),
+              zIndex: 4,
+              overflow: "hidden",
+              borderColor: BORDER,
+              borderTop: `3px solid ${ACCENT}`,
+            }}
+          >
+            {/* Title bar = drag handle */}
+            <Group
+              justify="space-between"
+              wrap="nowrap"
+              px="xs"
+              h={30}
+              onPointerDown={onPanelDown}
+              onPointerMove={onPanelMove}
+              onPointerUp={onPanelUp}
+              onPointerCancel={onPanelUp}
+              style={{
+                background: NAVY_DEEP,
+                cursor: panelDrag.current ? "grabbing" : "grab",
+                userSelect: "none",
+                touchAction: "none",
+              }}
+            >
+              <Group gap={6} wrap="nowrap">
+                <IconInfoCircle size={15} color="#fff" />
+                <Text fz={12} fw={700} c="#fff">
+                  Location info
+                </Text>
+              </Group>
+              <Group gap={2} wrap="nowrap">
+                <IconGripHorizontal size={14} color="#fff" style={{ opacity: 0.6 }} />
+                <ActionIcon
+                  size="xs"
+                  variant="transparent"
+                  c="#fff"
+                  aria-label={panelOpen ? "Collapse location info" : "Expand location info"}
+                  onClick={() => setPanelOpen((o) => !o)}
+                >
+                  <IconChevronDown
+                    size={14}
+                    style={{
+                      transform: panelOpen ? "rotate(180deg)" : "none",
+                      transition: "transform 150ms ease",
+                    }}
+                  />
+                </ActionIcon>
+              </Group>
+            </Group>
+
+            <Collapse expanded={panelOpen}>
+              {info && (
+                <Stack gap={6} p="xs">
+                  <Group justify="space-between" wrap="nowrap">
+                    <Badge size="xs" variant="light" color="red">
+                      Your position
+                    </Badge>
+                    <Tooltip label={clipboard.copied ? "Copied" : "Copy lat, lng"} withArrow>
+                      <ActionIcon
+                        size="xs"
+                        variant="subtle"
+                        color={clipboard.copied ? "teal" : "gray"}
+                        aria-label="Copy coordinates"
+                        onClick={() => clipboard.copy(`${info.lat.toFixed(6)}, ${info.lng.toFixed(6)}`)}
+                      >
+                        {clipboard.copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
+
+                  <Row label="Latitude">{info.lat.toFixed(6)}</Row>
+                  <Row label="Longitude">{info.lng.toFixed(6)}</Row>
+                  <Row label="Heading">
+                    {Math.round(normBearing(info.bearing))}° {compass(info.bearing)}
+                  </Row>
+                  <Row label="Pitch">{Math.round(info.pitch)}°</Row>
+                  <Row label="Eye height">{EYE_HEIGHT} m</Row>
+
+                  <Box style={{ borderTop: `1px solid ${BORDER}` }} pt={6}>
+                    <Row label="Road">
+                      {info.roadStatus === "off" && (
+                        <Text span fz={12} c="dimmed">
+                          SMV layer is off
+                        </Text>
+                      )}
+                      {info.roadStatus === "none" && (
+                        <Text span fz={12} c="dimmed">
+                          None within {ROAD_SEARCH_M} m
+                        </Text>
+                      )}
+                      {info.roadStatus === "ok" && info.road && (
+                        <Badge size="xs" variant="light" color={info.road.onRoad ? "green" : "orange"}>
+                          {info.road.onRoad ? "On road" : `${Math.round(info.road.dist)} m away`}
+                        </Badge>
+                      )}
+                    </Row>
+
+                    {info.roadStatus === "ok" && info.road && (
+                      <Stack gap={4} mt={6}>
+                        <Row label="Street">{info.road.name}</Row>
+                        {info.road.place && <Row label="Area">{info.road.place}</Row>}
+                        <Row label="Road ID">{info.road.id}</Row>
+                        {info.road.zonal.map((z) => (
+                          <Group key={z.key} justify="space-between" wrap="nowrap" gap={8}>
+                            <Group gap={6} wrap="nowrap">
+                              <span
+                                style={{
+                                  width: 9,
+                                  height: 9,
+                                  borderRadius: 2,
+                                  background: z.color,
+                                  display: "inline-block",
+                                }}
+                              />
+                              <Text fz={11} c="dimmed">
+                                {z.label}
+                              </Text>
+                            </Group>
+                            <Text fz={12} c={NAVY} fw={500}>
+                              {z.value.toLocaleString()}
+                            </Text>
+                          </Group>
+                        ))}
+                      </Stack>
+                    )}
+                  </Box>
+
+                  <Box style={{ borderTop: `1px solid ${BORDER}` }} pt={6}>
+                    <Row label="Building ahead">
+                      {info.buildingHeight === null ? "–" : `${Math.round(info.buildingHeight)} m tall`}
+                    </Row>
+                  </Box>
+                </Stack>
+              )}
+            </Collapse>
+          </Paper>
         </>
       )}
-
-      {/* Info panel */}
-      <Paper
-        withBorder
-        radius="md"
-        shadow="lg"
-        bg="white"
-        w={250}
-        style={{
-          position: "absolute",
-          left: 10,
-          bottom: 40,
-          zIndex: 3,
-          overflow: "hidden",
-          borderColor: BORDER,
-          borderTop: `3px solid ${ACCENT}`,
-        }}
-      >
-        <Group
-          justify="space-between"
-          wrap="nowrap"
-          px="xs"
-          h={30}
-          style={{ background: NAVY_DEEP, cursor: "pointer", userSelect: "none" }}
-          onClick={() => setPanelOpen((o) => !o)}
-        >
-          <Group gap={6} wrap="nowrap">
-            <IconInfoCircle size={15} color="#fff" />
-            <Text fz={12} fw={700} c="#fff">
-              Location info
-            </Text>
-          </Group>
-          <IconChevronDown
-            size={14}
-            color="#fff"
-            style={{
-              transform: panelOpen ? "rotate(180deg)" : "none",
-              transition: "transform 150ms ease",
-            }}
-          />
-        </Group>
-
-        <Collapse expanded={panelOpen}>
-          {info && (
-            <Stack gap={6} p="xs">
-              <Group justify="space-between" wrap="nowrap">
-                <Badge size="xs" variant="light" color={walking ? "red" : "blue"}>
-                  {sourceLabel}
-                </Badge>
-                <Tooltip label={clipboard.copied ? "Copied" : "Copy lat, lng"} withArrow>
-                  <ActionIcon
-                    size="xs"
-                    variant="subtle"
-                    color={clipboard.copied ? "teal" : "gray"}
-                    aria-label="Copy coordinates"
-                    onClick={() => clipboard.copy(`${info.lat.toFixed(6)}, ${info.lng.toFixed(6)}`)}
-                  >
-                    {clipboard.copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
-                  </ActionIcon>
-                </Tooltip>
-              </Group>
-
-              <Row label="Latitude">{info.lat.toFixed(6)}</Row>
-              <Row label="Longitude">{info.lng.toFixed(6)}</Row>
-              <Row label="Heading">
-                {Math.round(normBearing(info.bearing))}° {compass(info.bearing)}
-              </Row>
-              <Row label="Pitch">{Math.round(info.pitch)}°</Row>
-              {walking ? (
-                <Row label="Eye height">{EYE_HEIGHT} m</Row>
-              ) : (
-                <Row label="Zoom">{info.zoom.toFixed(1)}</Row>
-              )}
-
-              <Box style={{ borderTop: `1px solid ${BORDER}` }} pt={6}>
-                <Row label="Road">
-                  {info.roadStatus === "off" && <Text span fz={12} c="dimmed">SMV layer is off</Text>}
-                  {info.roadStatus === "zoom" && <Text span fz={12} c="dimmed">Zoom in to detect</Text>}
-                  {info.roadStatus === "none" && (
-                    <Text span fz={12} c="dimmed">None within {ROAD_SEARCH_M} m</Text>
-                  )}
-                  {info.roadStatus === "ok" && info.road && (
-                    <Badge size="xs" variant="light" color={info.road.onRoad ? "green" : "orange"}>
-                      {info.road.onRoad ? "On road" : `${Math.round(info.road.dist)} m away`}
-                    </Badge>
-                  )}
-                </Row>
-
-                {info.roadStatus === "ok" && info.road && (
-                  <Stack gap={4} mt={6}>
-                    <Row label="Street">{info.road.name}</Row>
-                    {info.road.place && <Row label="Area">{info.road.place}</Row>}
-                    <Row label="Road ID">{info.road.id}</Row>
-                    {info.road.zonal.map((z) => (
-                      <Group key={z.key} justify="space-between" wrap="nowrap" gap={8}>
-                        <Group gap={6} wrap="nowrap">
-                          <span
-                            style={{
-                              width: 9,
-                              height: 9,
-                              borderRadius: 2,
-                              background: z.color,
-                              display: "inline-block",
-                            }}
-                          />
-                          <Text fz={11} c="dimmed">
-                            {z.label}
-                          </Text>
-                        </Group>
-                        <Text fz={12} c={NAVY} fw={500}>
-                          {z.value.toLocaleString()}
-                        </Text>
-                      </Group>
-                    ))}
-                  </Stack>
-                )}
-              </Box>
-
-              <Box style={{ borderTop: `1px solid ${BORDER}` }} pt={6}>
-                <Row label={walking ? "Building ahead" : "Building here"}>
-                  {info.buildingHeight === null ? "–" : `${Math.round(info.buildingHeight)} m tall`}
-                </Row>
-              </Box>
-            </Stack>
-          )}
-        </Collapse>
-      </Paper>
     </>
   );
 }

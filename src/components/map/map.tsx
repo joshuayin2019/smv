@@ -6,6 +6,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { Loader, Stack, Text } from "@mantine/core";
 import { useMapStore } from "@/stores/map_stores";
 import { isWebglSupported } from "@/lib/webgl";
+import { ACCENT, NAVY_DEEP } from "@/lib/theme_colors";
 import LayerControl from "./layer_control";
 import MapWalk from "./map_walk";
 
@@ -20,6 +21,42 @@ const MAP_STYLE = "https://tiles.openfreemap.org/styles/bright";
 // so glyph requests don't 404.
 const FALLBACK_FONT = "Noto%20Sans%20Regular";
 const SUPPORTED_FONTS = /fonts\/(Noto%20Sans%20(Regular|Bold|Italic))\//;
+
+// Styles for the MapLibre fullscreen + GPS buttons so they match the Layers button:
+// navy background, green top border, white icon. Stacked under Layers on the right.
+const CONTROL_CSS = `
+  .maplibregl-map .maplibregl-ctrl-top-right { top: 44px; }
+  .maplibregl-map .maplibregl-ctrl-top-right .maplibregl-ctrl { margin: 8px 10px 0 0; }
+
+  .maplibregl-map .maplibregl-ctrl-top-right .maplibregl-ctrl-group {
+    box-sizing: border-box;
+    width: 34px;
+    height: 34px;
+    background: ${NAVY_DEEP};
+    border-radius: 8px;
+    border-top: 3px solid ${ACCENT};
+    box-shadow: 0 10px 15px -5px rgba(0, 0, 0, 0.25);
+    overflow: hidden;
+  }
+  .maplibregl-map .maplibregl-ctrl-top-right .maplibregl-ctrl-group button {
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    background-color: transparent;
+  }
+  .maplibregl-map .maplibregl-ctrl-top-right .maplibregl-ctrl-group button:not(:disabled):hover {
+    background-color: rgba(255, 255, 255, 0.12);
+  }
+  .maplibregl-map .maplibregl-ctrl-top-right .maplibregl-ctrl-icon {
+    filter: brightness(0) invert(1);
+    background-position: center;
+  }
+  .maplibregl-map .maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate-active,
+  .maplibregl-map .maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate-active-error {
+    background-color: rgba(0, 204, 10, 0.3) !important;
+  }
+`;
 
 // Hide the basemap's own POI icons/labels so only the plain map + buildings remain.
 function hideBasemapPois(map: maplibregl.Map) {
@@ -163,7 +200,7 @@ export default function Map({ active = true }: { active?: boolean }) {
       new maplibregl.FullscreenControl({
         container: wrapperRef.current ?? undefined,
       }),
-      "top-left"
+      "top-right"
     );
 
     // Locate the user: centers the map on their position and keeps tracking.
@@ -175,7 +212,7 @@ export default function Map({ active = true }: { active?: boolean }) {
         showAccuracyCircle: true,
         fitBoundsOptions: { maxZoom: 17 },
       }),
-      "top-left"
+      "top-right"
     );
 
     const updateZoom = () => setZoom(map.getZoom().toFixed(1));
@@ -241,6 +278,8 @@ export default function Map({ active = true }: { active?: boolean }) {
       ref={wrapperRef}
       style={{ position: "relative", width: "100%", height: "100%" }}
     >
+      <style>{CONTROL_CSS}</style>
+
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
 
       {(loading || error) && (
