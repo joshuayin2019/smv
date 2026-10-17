@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Box, Group, Select, Stack, Text } from '@mantine/core';
+import { useEffect, useMemo, useState } from 'react';
+import { Box, Group, LoadingOverlay, Select, Stack, Text } from '@mantine/core';
 import { BarChart, DonutChart, PieChart, RadarChart } from '@mantine/charts';
 import {
   PolarAngleAxis,
@@ -9,7 +9,9 @@ import {
   Tooltip,
   Treemap as RechartsTreemap,
 } from 'recharts';
-import { usePoiStore, type PoiProperties } from '@/stores/poi_stores';
+import { usePoiStore } from '@/stores/poi_stores';
+import { useGlobalStore } from '@/stores/global_stores';
+import { basePath } from '@/lib/config'; // adjust to wherever your basePath lives
 
 // ----- Options ---------------------------------------------------------------
 const GROUP_FIELDS = [
@@ -50,44 +52,77 @@ const PALETTE = [
 
 type Item = { name: string; value: number };
 
-function topWithOther(items: Item[], limit: number, otherLabel: string): Item[] {
-  const top = items.slice(0, limit);
-  const rest = items.slice(limit).reduce((sum, i) => sum + i.value, 0);
-  return rest > 0 ? [...top, { name: otherLabel, value: rest }] : top;
-}
+// Response of GET /api/pages/poi/summary
+type SummaryResult = {
+  items: Item[]; // top groups, already sorted and limited by the server
+  other: number; // sum of everything beyond the limit (the "Other ..." bucket)
+  total: number; // POIs matching the table's current query
+};
+
+const EMPTY_RESULT: SummaryResult = { items: [], other: 0, total: 0 };
 
 // 'blue.6' -> Mantine CSS variable, so the SVG shapes use the theme colors
 const cssColor = (c: string) => `var(--mantine-color-${c.replace('.', '-')})`;
 
 export default function SummaryPOI() {
-  const poi = usePoiStore((s) => s.poi);
-  const filteredPoi = usePoiStore((s) => s.filteredPoi);
+  // The querystring the table is currently using (search + filters + radius + scope).
+  // The server aggregates it; nothing is counted in the browser.
+  const poiTableQuery = usePoiStore((s) => s.poiTableQuery);
+  const scope = useGlobalStore((s) => s.auth?.scope_poi);
+  const scopeJson = useMemo(() => JSON.stringify(scope ?? []), [scope]);
 
   const [chartType, setChartType] = useState<ChartType>('bar');
   const [groupBy, setGroupBy] = useState<GroupField>('category');
-
-  // Use what the table is showing; fall back to all POIs until the table reports
-  const rows: PoiProperties[] = useMemo(
-    () => filteredPoi ?? poi.features.map((f) => f.properties),
-    [filteredPoi, poi]
-  );
-
-  // Count POIs per group, sorted from largest to smallest
-  const counts: Item[] = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const r of rows) {
-      const key = (r[groupBy] as string | null) || 'Unspecified';
-      map.set(key, (map.get(key) ?? 0) + 1);
-    }
-    return Array.from(map, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  }, [rows, groupBy]);
 
   const groupLabel = GROUP_FIELDS.find((g) => g.value === groupBy)?.label ?? '';
   const otherLabel = `Other ${groupLabel.toLowerCase()}`;
   const limit = CHART_TYPES.find((c) => c.value === chartType)?.limit ?? 10;
 
+  // ----- Server-side counts ----------------------------------------------------
+  const [result, setResult] = useState<SummaryResult>(EMPTY_RESULT);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    setLoading(true);
+
+    // small debounce so quick filter / search changes in the table don't fire a request each
+    const timer = setTimeout(async () => {
+      try {
+        const sp = new URLSearchParams(poiTableQuery ?? '');
+        if (!sp.get('scope')) sp.set('scope', scopeJson); // table query had no scope: use the user's
+        sp.set('groupBy', groupBy);
+        sp.set('limit', String(limit));
+
+        const res = await fetch(`${basePath}/api/pages/poi/summary?${sp.toString()}`, {
+          signal: ctrl.signal,
+        });
+        if (!res.ok) throw new Error(`Summary request failed (${res.status})`);
+        setResult((await res.json()) as SummaryResult);
+        setError(null);
+        setLoading(false);
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return; // a newer request replaced this one
+        setError((e as Error).message);
+        setLoading(false);
+      }
+    }, 150);
+
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [groupBy, limit, poiTableQuery, scopeJson]);
+
+  const total = result.total;
+
   // Top groups + "Other ..." bucket, for the selected chart
-  const data = useMemo(() => topWithOther(counts, limit, otherLabel), [counts, limit, otherLabel]);
+  const data: Item[] = useMemo(
+    () =>
+      result.other > 0 ? [...result.items, { name: otherLabel, value: result.other }] : result.items,
+    [result, otherLabel]
+  );
 
   // Same data with a color per slice (donut, pie, radial bar, treemap)
   const colored = useMemo(
@@ -120,9 +155,7 @@ export default function SummaryPOI() {
         );
 
       case 'barslist':
-        return (
-            <RankedBars items={data} />
-        );
+        return <RankedBars items={data} />;
 
       case 'donut':
         return (
@@ -131,7 +164,7 @@ export default function SummaryPOI() {
               data={colored}
               size={190}
               thickness={28}
-              chartLabel={rows.length.toLocaleString()}
+              chartLabel={total.toLocaleString()}
               withTooltip
               tooltipDataSource="segment"
             />
@@ -247,11 +280,25 @@ export default function SummaryPOI() {
           POIs by {groupLabel}
         </Text>
         <Text fz="xs" c="dimmed">
-          {rows.length.toLocaleString()} of {poi.features.length.toLocaleString()} POIs
+          {total.toLocaleString()} POIs
         </Text>
+        {error && (
+          <Text fz="xs" c="red">
+            {error}
+          </Text>
+        )}
       </Box>
 
-      <Box style={{ flex: 1, minHeight: 260 }}>{renderChart()}</Box>
+      {/* Previous result stays visible under the overlay while a new one loads */}
+      <Box pos="relative" style={{ flex: 1, minHeight: 260 }}>
+        <LoadingOverlay
+          visible={loading}
+          zIndex={5}
+          overlayProps={{ radius: 'sm', blur: 1 }}
+          loaderProps={{ size: 'sm' }}
+        />
+        {renderChart()}
+      </Box>
     </Stack>
   );
 }
@@ -321,12 +368,7 @@ function RankedBars({ items }: { items: Item[] }) {
   return (
     <Stack gap={4}>
       {items.map((i) => (
-        <Box
-          key={i.name}
-          pos="relative"
-          h={28}
-          title={`${i.name}: ${i.value.toLocaleString()}`}
-        >
+        <Box key={i.name} pos="relative" h={28} title={`${i.name}: ${i.value.toLocaleString()}`}>
           {/* the bar itself, width relative to the largest value */}
           <Box
             pos="absolute"
@@ -338,14 +380,7 @@ function RankedBars({ items }: { items: Item[] }) {
           />
 
           {/* label + value sit on top of the bar */}
-          <Group
-            pos="relative"
-            h="100%"
-            px={8}
-            gap={8}
-            wrap="nowrap"
-            justify="space-between"
-          >
+          <Group pos="relative" h="100%" px={8} gap={8} wrap="nowrap" justify="space-between">
             <Text fz="xs" fw={500} truncate style={{ minWidth: 0 }}>
               {i.name}
             </Text>

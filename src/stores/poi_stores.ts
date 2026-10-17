@@ -48,10 +48,47 @@ export const MIN_RADIUS_M  = 5;
 export type PoiRadius = { lat: number | ""; lng: number | ""; m: number | "" };
 export const emptyRadius: PoiRadius = { lat: "", lng: "", m: MIN_RADIUS_M };
 
+// ----- Table query shared with the summary chart ----------------------------
+// What the table filters by (no sort / paging: they don't change the aggregates).
+// `radius.km` is the distance in kilometres, already resolved (center set, km >= minimum).
+export type PoiFilterKey = "category" | "region" | "province" | "city_municipality" | "barangay";
+export type PoiTableQueryPayload = {
+    search: string;
+    filters: Record<PoiFilterKey, string[]>;
+    radius: { lat: number; lng: number; km: number } | null;
+};
+
+export const emptyPoiTableQuery: PoiTableQueryPayload = {
+    search: "",
+    filters: { category: [], region: [], province: [], city_municipality: [], barangay: [] },
+    radius: null,
+};
+
+// Stable string, so consumers only react when the query really changes
+export const serializePoiTableQuery = (q: PoiTableQueryPayload) => JSON.stringify(q);
+
+export const parsePoiTableQuery = (s: string | null): PoiTableQueryPayload => {
+    if (!s) return emptyPoiTableQuery;
+    try {
+        const p = JSON.parse(s) as Partial<PoiTableQueryPayload>;
+        return {
+            search: p.search ?? "",
+            filters: { ...emptyPoiTableQuery.filters, ...(p.filters ?? {}) },
+            radius: p.radius ?? null,
+        };
+    } catch {
+        return emptyPoiTableQuery;
+    }
+};
+
 type PoiState = {
     poi: PoiCollection;
     // rows currently visible in the table after search/filters (null = table has not reported yet)
     filteredPoi: PoiProperties[] | null;
+    // query the table currently shows (JSON of PoiTableQueryPayload; see serializePoiTableQuery)
+    // and how many rows it matches. Shared with the summary chart, which asks the server for its own aggregates.
+    poiTableQuery: string | null;
+    poiTotal: number;
     // radius filter (center + distance), shared by the table and the map
     radius: PoiRadius;
     // true while the next map click should set the radius center
@@ -64,6 +101,7 @@ type PoiState = {
     setSphereActive: (v: boolean) => void;
     setPoi: (poi: PoiCollection) => void;
     setFilteredPoi: (rows: PoiProperties[] | null) => void;
+    setPoiTableQuery: (query: string | null, total: number) => void;
     setRadius: (r: Partial<PoiRadius>) => void;
     // turning this on turns pickingFrom off (both use the next map click)
     setPickingCenter: (v: boolean) => void;
@@ -101,6 +139,8 @@ const emptyRoute = {
 export const usePoiStore = create<PoiState>((set) => ({
     poi: emptyPoi,
     filteredPoi: null,
+    poiTableQuery: null,
+    poiTotal: 0,
     radius: emptyRadius,
     pickingCenter: false,
     selectedPoi: null,
@@ -109,6 +149,7 @@ export const usePoiStore = create<PoiState>((set) => ({
     setSphereActive: (sphereActive) => set({ sphereActive }),
     setPoi: (poi) => set({ poi, selectedPoi: null }),
     setFilteredPoi: (filteredPoi) => set({ filteredPoi }),
+    setPoiTableQuery: (poiTableQuery, poiTotal) => set({ poiTableQuery, poiTotal }),
     setRadius: (r) => set((s) => ({ radius: { ...s.radius, ...r } })),
     setPickingCenter: (pickingCenter) =>
         set(pickingCenter ? { pickingCenter: true, pickingFrom: false } : { pickingCenter: false }),
@@ -116,6 +157,8 @@ export const usePoiStore = create<PoiState>((set) => ({
         set({
             poi: emptyPoi,
             filteredPoi: null,
+            poiTableQuery: null,
+            poiTotal: 0,
             radius: emptyRadius,
             pickingCenter: false,
             selectedPoi: null,

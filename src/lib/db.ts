@@ -26,7 +26,7 @@ export const conn = (g.pgPool ??= new Pool({
   host: process.env.PGSQL_HOST,
   port: Number(process.env.PGSQL_PORT ?? 5432),
   database: process.env.PGSQL_DATABASE,
-  max: 10,
+  max: 20,
 }));
 
 conn.on("error", (e) => console.error("pg pool error:", e));

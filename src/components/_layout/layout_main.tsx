@@ -19,7 +19,6 @@ export default function LayoutMain(_props: { navbarOpened?: boolean }) {
   const showMap = !HIDE_MAP_PAGES.includes(activePage);
   const isAdmin = auth?.role === 'admin';
 
-
   useEffect(() => {
     if (auth && !isAdmin && activePage === 'User Management') {
       setActivePage(DEFAULT_PAGE);

@@ -1,59 +1,73 @@
-// components/map/poi_layer.tsx  (POI points + admin-level clustering)
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+// components/map/poi_layer.tsx  (POI points + vector-tile clustering)
+import { useEffect, useRef, type RefObject } from "react";
 import * as maplibregl from "maplibre-gl";
 import { useMapStore } from "@/stores/map_stores";
-import { usePoiStore, PoiCollection, type PoiProperties } from "@/stores/poi_stores";
+
 import { useGlobalStore } from "@/stores/global_stores";
+import { usePoiStore, type PoiProperties } from "@/stores/poi_stores";
 import { reverseGeocode, type Place } from "@/lib/openroute";
 import PoiDetailsWindow from "./poi_details_window";
+import { POI_TILES_URL } from "@/lib/config";
 
 
 const POI_PAGE = "Point of Interest"; // activePage value of the POI navbar item
 
+// Vector tile source (clustering is done by the tile route: features WITH a point_count property are clusters)
 const POI_SOURCE = "poi";
-const GROUP_SOURCE = "poi-groups";
+const POI_SOURCE_LAYER = "poi";
+const TILE_MINZOOM = 5; // no tile requests below this zoom
+const TILE_MAXZOOM = 17; // z17 tiles hold the real points (route: CLUSTER_MAX_ZOOM = 16); higher zooms reuse (overzoom) them
+
+// Clusters show below this zoom, individual POI markers from this zoom up.
+// Must match CLUSTER_MAX_ZOOM + 1 in the tile route (CLUSTER_MAX_ZOOM = 16).
+// TILE_MAXZOOM must be >= this value, otherwise the map never requests a tile that contains points.
+const POI_POINTS_MINZOOM = 17;
+
+const CLUSTER_LAYER = "poi-clusters";
+const CLUSTER_COUNT_LAYER = "poi-cluster-count";
 const POI_LAYER = "poi-circles";
 
-const DEFAULT_ICON = "poi-default";
 const ICON_PREFIX = "cat-";
 const ICON_URL = (id: string) => `/api/pages/poi/category-icons/${encodeURIComponent(id)}`;
 const ICON_PX = 36; // rasterised size; shown at 24px with pixelRatio 2 (crisp on retina)
 
+// Full record of one POI (everything except the geometry)
+const POI_DETAILS_URL = (id: string | number) =>
+  `/api/pages/poi/details/${encodeURIComponent(String(id))}`;
+
 // maplibre's own data type, so no global GeoJSON namespace is needed
 type GeoJSONData = maplibregl.GeoJSONSourceSpecification["data"];
 
-// Priority order: all -> region -> province -> municipality -> barangay -> individual POIs.
-// A layer is visible from minzoom (inclusive) to maxzoom (exclusive).
-// "all" has no codeKey/nameKey: every POI is merged into a single group.
-const LEVELS = [
-  { level: "all", codeKey: null,       nameKey: null,                minzoom: 0,  maxzoom: 10, color: "#495057" },
-  { level: "reg", codeKey: "reg_code", nameKey: "region",            minzoom: 10, maxzoom: 11, color: "#1c7ed6" },
-  { level: "pro", codeKey: "pro_code", nameKey: "province",          minzoom: 11, maxzoom: 12, color: "#7048e8" },
-  { level: "mun", codeKey: "mun_code", nameKey: "city_municipality", minzoom: 12, maxzoom: 14, color: "#0ca678" },
-  { level: "bgy", codeKey: "bgy_code", nameKey: "barangay",          minzoom: 14, maxzoom: 16, color: "#f08c00" },
-] as const;
+// Cluster tiles always carry point_count (even for a cell with a single POI), point tiles never do.
+// Checking for the property (not its value) keeps stray one-POI cells from drawing as dots at low zoom.
+const IS_CLUSTER = ["has", "point_count"] as unknown as maplibregl.FilterSpecification;
+const IS_POINT = ["!", ["has", "point_count"]] as unknown as maplibregl.FilterSpecification;
 
-const POINTS_MINZOOM = 16; // individual POIs appear from here (right after the last group level)
-const POINTS_MAXZOOM = 18; // zoom cap when clicking the last group level (bgy -> individual POIs)
-const ZOOM_EPS = 0.01; // keeps the target strictly inside the next level's [minzoom, maxzoom)
-const SELECT_ZOOM = 17; // minimum zoom when a POI is selected (table row or map click); individual POIs show from 16
-const SELECT_FLY_MS = 800; // duration of the fly-to animation
+
 const GROUP_FONT = ["Montserrat Medium"]; // must exist in the basemap style's glyph server
 
-// Selected POI highlight: a bigger copy of its icon + a pulsing blue glow (same blue as the old Leaflet version)
+const EMPTY_COLLECTION = { type: "FeatureCollection", features: [] } as unknown as GeoJSONData;
+
+// cat-<category_id>. When that image is not registered yet, the missing-image resolver (below)
+// loads the svg and maplibre waits for it, so the tile is drawn with the real icon.
+const ICON_IMAGE_EXPR = [
+  "concat",
+  ICON_PREFIX,
+  ["to-string", ["get", "category_id"]],
+] as unknown as maplibregl.ExpressionSpecification;
+
+
+// Selected POI highlight: a bigger copy of its icon + a pulsing blue glow.
+// It has its own source with one feature, so it also shows for a POI picked in the table.
 const SELECTED_SOURCE = "poi-selected";
 const SELECTED_PULSE_LAYER = "poi-selected-pulse";
 const SELECTED_ICON_LAYER = "poi-selected-icon";
 const SELECTED_COLOR = "#228be6";
 const PULSE_MS = 1200; // one heartbeat cycle (two quick beats, then a short rest)
-const EMPTY_COLLECTION = { type: "FeatureCollection", features: [] } as unknown as GeoJSONData;
-
-// cat-<category_id> if that image is registered, otherwise the default dot (shared by the normal and the selected layer)
-const ICON_IMAGE_EXPR = [
-  "coalesce",
-  ["image", ["concat", ICON_PREFIX, ["to-string", ["get", "category_id"]]]],
-  ["image", DEFAULT_ICON],
-] as unknown as maplibregl.ExpressionSpecification;
+// minimum zoom when a POI is selected (table row or map click). Must be >= POI_POINTS_MINZOOM,
+// otherwise the selected POI would still be inside a cluster.
+const SELECT_ZOOM = POI_POINTS_MINZOOM;
+const SELECT_FLY_MS = 800; // duration of the fly-to animation
 
 // Icon size of the selected POI; `scale` is the heartbeat factor (1 = resting size)
 const selectedIconSize = (scale: number) =>
@@ -65,10 +79,6 @@ const bump = (t: number, center: number, width: number) => Math.exp(-(((t - cent
 // "lub-dub": a strong beat, a smaller second beat, then a rest (t goes 0 -> 1 over one cycle)
 const heartbeatScale = (t: number) => 1 + 0.3 * bump(t, 0.12, 0.06) + 0.2 * bump(t, 0.32, 0.07);
 
-const EXTENT_PADDING = 60; // px of breathing room around the data when zooming to its extent
-const EXTENT_MAXZOOM = 15; // stops a single POI (or a tiny cluster) from zooming in too far
-const PANEL_SETTLE_MS = 400; // longer than the splitter transition (300ms), so the pane has its final size
-const MIN_MAP_HEIGHT = 80; // px; below this the visible map is practically hidden (e.g. panel at 100%)
 
 // Directions (OpenRouteService): route lines + start/end markers
 const ROUTE_SOURCE = "poi-route";
@@ -83,7 +93,8 @@ const ROUTE_FIT_MAXZOOM = 17;
 
 // every layer this component owns, so the layer control can show/hide them together
 const POI_LAYER_IDS = [
-  ...LEVELS.flatMap((l) => [`poi-group-${l.level}`, `poi-group-label-${l.level}`]),
+  CLUSTER_LAYER,
+  CLUSTER_COUNT_LAYER,
   POI_LAYER,
   SELECTED_PULSE_LAYER,
   SELECTED_ICON_LAYER,
@@ -92,13 +103,6 @@ const POI_LAYER_IDS = [
   ROUTE_POINT_LAYER,
 ];
 
-// zoom range of the level that comes after LEVELS[index]
-// (all -> reg -> pro -> mun -> bgy -> individual POIs)
-function nextLevelRange(index: number): { min: number; max: number } {
-  const next = LEVELS[index + 1];
-  return next ? { min: next.minzoom, max: next.maxzoom } : { min: POINTS_MINZOOM, max: POINTS_MAXZOOM };
-}
-
 // Height (px) of the map canvas that sticks out below the visible pane, i.e. the part hidden
 // behind the bottom panel. 0 when the canvas already matches the pane.
 function hiddenHeight(map: maplibregl.Map, pane: HTMLElement | null | undefined): number {
@@ -106,89 +110,16 @@ function hiddenHeight(map: maplibregl.Map, pane: HTMLElement | null | undefined)
   return Math.max(0, map.getContainer().clientHeight - pane.clientHeight);
 }
 
-type Group = {
-  code: string;
-  name: string;
-  count: number;
-  sumLng: number;
-  sumLat: number;
-  minLng: number;
-  minLat: number;
-  maxLng: number;
-  maxLat: number;
-};
-
-// One feature per group at every level, tagged with its level so layers can filter on it.
-function buildGroups(poi: PoiCollection): GeoJSONData {
-  const features: unknown[] = [];
-
-  for (const lvl of LEVELS) {
-    const groups = new Map<string, Group>();
-
-    for (const f of poi.features) {
-      if (f.geometry.type !== "Point") continue;
-      const [lng, lat] = f.geometry.coordinates as [number, number];
-
-      // "all" level: a single shared group; other levels group by their code column
-      const code = lvl.codeKey ? f.properties[lvl.codeKey] ?? "none" : "all";
-      const name = lvl.nameKey ? f.properties[lvl.nameKey] ?? "Unassigned" : "All POIs";
-
-      let g = groups.get(code);
-      if (!g) {
-        g = { code, name, count: 0, sumLng: 0, sumLat: 0, minLng: lng, minLat: lat, maxLng: lng, maxLat: lat };
-        groups.set(code, g);
-      }
-      g.count += 1;
-      g.sumLng += lng;
-      g.sumLat += lat;
-      g.minLng = Math.min(g.minLng, lng);
-      g.minLat = Math.min(g.minLat, lat);
-      g.maxLng = Math.max(g.maxLng, lng);
-      g.maxLat = Math.max(g.maxLat, lat);
-    }
-
-    for (const g of groups.values()) {
-      features.push({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [g.sumLng / g.count, g.sumLat / g.count] },
-        properties: {
-          level: lvl.level,
-          code: g.code,
-          name: g.name,
-          count: g.count,
-          minLng: g.minLng,
-          minLat: g.minLat,
-          maxLng: g.maxLng,
-          maxLat: g.maxLat,
-        },
-      });
-    }
-  }
-
-  return { type: "FeatureCollection", features } as unknown as GeoJSONData;
+// tile url with the user's scope attached, e.g. .../{z}/{x}/{y}?scope=%5B%7B...%7D%5D
+// (the tile route reads the `scope` query parameter)
+function buildTilesUrl(scopeKey: string): string {
+  const base = POI_TILES_URL();
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}scope=${encodeURIComponent(scopeKey)}`;
 }
 
-// bounding box of every POI point (empty bounds when there are no points)
-function getPoiBounds(poi: PoiCollection): maplibregl.LngLatBounds {
-  const bounds = new maplibregl.LngLatBounds();
-  for (const f of poi.features) {
-    if (f.geometry.type !== "Point") continue;
-    bounds.extend(f.geometry.coordinates as [number, number]);
-  }
-  return bounds;
-}
 
-// distinct category_id values present in the POI data
-function collectCategoryIds(poi: PoiCollection): string[] {
-  const ids = new Set<string>();
-  for (const f of poi.features) {
-    const id = (f.properties as Record<string, unknown>).category_id;
-    if (id !== null && id !== undefined && id !== "") ids.add(String(id));
-  }
-  return [...ids];
-}
-
-// plain dot used when a category has no svg (or it has not loaded yet)
+// plain dot used for categories that have no svg (or whose svg fails to load)
 function makeDefaultIcon(): ImageData {
   const canvas = document.createElement("canvas");
   canvas.width = ICON_PX;
@@ -204,20 +135,30 @@ function makeDefaultIcon(): ImageData {
   return ctx.getImageData(0, 0, ICON_PX, ICON_PX);
 }
 
-// fetch one svg through the route and register it on the map as `cat-<id>`
-async function loadCategoryIcon(map: maplibregl.Map, id: string): Promise<boolean> {
-  const name = `${ICON_PREFIX}${id}`;
-  if (map.hasImage(name)) return true;
+// fetch one svg through the route and register it on the map under `imageId` (= cat-<id>).
+// Always leaves an image behind: the svg, or the default dot when there is none / it fails.
+async function registerCategoryIcon(map: maplibregl.Map, imageId: string): Promise<void> {
+  const categoryId = imageId.slice(ICON_PREFIX.length);
 
-  const img = new Image(ICON_PX, ICON_PX); // explicit size so svgs with only a viewBox still rasterise
-  img.src = ICON_URL(id);
-  try {
-    await img.decode();
-  } catch {
-    return false; // 404 or invalid svg -> POIs of this category use the default dot
+  let img: HTMLImageElement | null = null;
+  if (categoryId !== "") {
+    const candidate = new Image(ICON_PX, ICON_PX); // explicit size so svgs with only a viewBox still rasterise
+    candidate.src = ICON_URL(categoryId);
+    try {
+      await candidate.decode();
+      img = candidate;
+    } catch {
+      img = null; // 404 or invalid svg -> default dot
+    }
   }
-  if (!map.hasImage(name)) map.addImage(name, img, { pixelRatio: 2 });
-  return true;
+
+  try {
+    if (map.hasImage(imageId)) return;
+    if (img) map.addImage(imageId, img, { pixelRatio: 2 });
+    else map.addImage(imageId, makeDefaultIcon(), { pixelRatio: 2 });
+  } catch {
+    // the map was removed while the svg was loading
+  }
 }
 
 type PoiLayerProps = {
@@ -231,8 +172,18 @@ type PoiLayerProps = {
 export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) {
   const activePage = useGlobalStore((s) => s.activePage);
   const map = useMapStore((s) => s.map);
-  const poi = usePoiStore((s) => s.poi);
   const selectedPoi = usePoiStore((s) => s.selectedPoi);
+
+  // scope of the logged-in user (same value MapDataManagement sends), compared by content
+  const scopePoi = useGlobalStore((s) => s.auth?.scope_poi);
+  const scopeKey = JSON.stringify(scopePoi ?? []);
+
+  // always holds the latest scope, so the layer-setup effect can read it without depending on it
+  const scopeKeyRef = useRef(scopeKey);
+  scopeKeyRef.current = scopeKey;
+
+  // icons being loaded right now (image id -> its load). Every request for the same icon waits on the same load.
+  const pendingIcons = useRef<Map<string, Promise<void>>>(new Map());
 
   // Directions state (written by the Directions tab in the details window, drawn here)
   const routes = usePoiStore((s) => s.routes);
@@ -243,11 +194,6 @@ export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) 
   const setPickingFrom = usePoiStore((s) => s.setPickingFrom);
   const setPickedPoint = usePoiStore((s) => s.setPickedPoint);
 
-  // recomputed only when the POI data changes
-  const groups = useMemo(() => buildGroups(poi), [poi]);
-
-  // category ids already tried (loaded or failed), so we never request the same svg twice
-  const triedIcons = useRef<Set<string>>(new Set());
 
   //For active page handler to avoid blinking\
   const activePageRef = useRef(activePage);
@@ -281,92 +227,67 @@ export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) 
     if (activePage === POI_PAGE) zoomPending.current = true;
   }, [activePage]);
 
-  // zoom to the extent of the POI data, fitted into the part of the map that is actually visible
-  useEffect(() => {
-    if (!map || activePage !== POI_PAGE || !zoomPending.current) return;
-    if (poi.features.length === 0) return; // data not loaded yet; runs again when it arrives
 
-    // wait for the splitter transition to finish so the pane has its final height
-    const timer = window.setTimeout(() => {
-      if (!zoomPending.current) return;
-
-      map.resize();
-      const hidden = hiddenHeight(map, mapPaneRef?.current);
-      const visibleHeight = map.getContainer().clientHeight - hidden;
-      if (visibleHeight < MIN_MAP_HEIGHT) return; // map is (almost) hidden, e.g. panel at 100%
-
-      const bounds = getPoiBounds(poi);
-      if (bounds.isEmpty()) return;
-
-      const pad = Math.min(EXTENT_PADDING, visibleHeight / 4); // never larger than the map can take
-      zoomPending.current = false;
-      map.fitBounds(bounds, {
-        // extra bottom padding = the strip of the canvas hidden behind the panel
-        padding: { top: pad, left: pad, right: pad, bottom: pad + hidden },
-        maxZoom: EXTENT_MAXZOOM,
-        duration: 800,
-      });
-    }, PANEL_SETTLE_MS);
-
-    return () => window.clearTimeout(timer);
-  }, [map, activePage, poi, mapPaneRef]);
 
   // add sources, layers, and handlers once the map is ready
   useEffect(() => {
     if (!map) return;
 
-    const current = usePoiStore.getState().poi; // current value, without re-running on every change
+    // POIs come from the vector tile route (clustered server-side, filtered by the user's scope)
+    map.addSource(POI_SOURCE, {
+      type: "vector",
+      tiles: [buildTilesUrl(scopeKeyRef.current)],
+      minzoom: TILE_MINZOOM,
+      maxzoom: TILE_MAXZOOM,
+    });
 
-    if (!map.hasImage(DEFAULT_ICON)) map.addImage(DEFAULT_ICON, makeDefaultIcon(), { pixelRatio: 2 });
+    // cluster circles: bigger circle + different colour for bigger clusters. Hidden from POI_POINTS_MINZOOM up.
+    map.addLayer({
+      id: CLUSTER_LAYER,
+      type: "circle",
+      source: POI_SOURCE,
+      "source-layer": POI_SOURCE_LAYER,
+      maxzoom: POI_POINTS_MINZOOM,
+      filter: IS_CLUSTER,
+      paint: {
+        "circle-color": ["step", ["get", "point_count"], "#1c7ed6", 100, "#7048e8", 1000, "#e8590c"],
+        "circle-radius": ["step", ["get", "point_count"], 12, 100, 16, 1000, 20, 10000, 26],
+        "circle-opacity": 0.85,
+        "circle-stroke-width": 2,
+        "circle-stroke-color": "#ffffff",
+      },
+    });
 
-    map.addSource(POI_SOURCE, { type: "geojson", data: current as unknown as GeoJSONData });
-    map.addSource(GROUP_SOURCE, { type: "geojson", data: buildGroups(current) });
+    // count text inside each cluster (maxzoom, NOT minzoom: it must show while clusters show)
+    map.addLayer({
+      id: CLUSTER_COUNT_LAYER,
+      type: "symbol",
+      source: POI_SOURCE,
+      "source-layer": POI_SOURCE_LAYER,
+      maxzoom: POI_POINTS_MINZOOM,
+      filter: IS_CLUSTER,
+      layout: {
+        "text-field": ["get", "point_count_abbreviated"],
+        "text-font": GROUP_FONT,
+        "text-size": 12,
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+      },
+      paint: { "text-color": "#ffffff" },
+    });
 
-    // group markers: one circle layer + one label layer per level
-    for (const lvl of LEVELS) {
-      map.addLayer({
-        id: `poi-group-${lvl.level}`,
-        type: "circle",
-        source: GROUP_SOURCE,
-        filter: ["==", ["get", "level"], lvl.level],
-        minzoom: lvl.minzoom,
-        maxzoom: lvl.maxzoom,
-        paint: {
-          "circle-color": lvl.color,
-          "circle-opacity": 0.85,
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#ffffff",
-          // bigger circle for bigger groups
-          "circle-radius": ["step", ["get", "count"], 14, 10, 18, 50, 24, 200, 30],
-        },
-      });
-
-      map.addLayer({
-        id: `poi-group-label-${lvl.level}`,
-        type: "symbol",
-        source: GROUP_SOURCE,
-        filter: ["==", ["get", "level"], lvl.level],
-        minzoom: lvl.minzoom,
-        maxzoom: lvl.maxzoom,
-        layout: {
-          "text-field": ["to-string", ["get", "count"]],
-          "text-font": GROUP_FONT,
-          "text-size": 12,
-          "text-allow-overlap": true,
-        },
-        paint: { "text-color": "#ffffff" },
-      });
-    }
-
-    // individual POIs with their category svg, only at the closest zoom levels
+    // individual POIs with their category svg. Only drawn from POI_POINTS_MINZOOM up.
     map.addLayer({
       id: POI_LAYER,
       type: "symbol",
       source: POI_SOURCE,
-      minzoom: POINTS_MINZOOM,
+      "source-layer": POI_SOURCE_LAYER,
+      minzoom: POI_POINTS_MINZOOM,
+      filter: IS_POINT,
       layout: {
         "icon-image": ICON_IMAGE_EXPR,
-        "icon-size": ["interpolate", ["linear"], ["zoom"], 14, 0.7, 17, 1],
+        // stops must be strictly increasing, so the second stop is POI_POINTS_MINZOOM + 1
+        "icon-size": ["interpolate", ["linear"], ["zoom"], POI_POINTS_MINZOOM, 0.7, POI_POINTS_MINZOOM + 1, 1],
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
       },
@@ -389,7 +310,7 @@ export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) 
       id: SELECTED_PULSE_LAYER,
       type: "circle",
       source: SELECTED_SOURCE,
-      minzoom: POINTS_MINZOOM,
+      minzoom: POI_POINTS_MINZOOM,
       // radius and opacity are animated by the effect further down
       paint: { "circle-color": SELECTED_COLOR, "circle-opacity": 0.4, "circle-radius": 14, "circle-blur": 0.6 },
     });
@@ -397,14 +318,32 @@ export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) 
       id: SELECTED_ICON_LAYER,
       type: "symbol",
       source: SELECTED_SOURCE,
-      minzoom: POINTS_MINZOOM,
+      minzoom: POI_POINTS_MINZOOM,
       layout: {
         "icon-image": ICON_IMAGE_EXPR,
-        // about 1.5x the normal icon (old version: 28px vs 18px); the heartbeat effect scales it further
+        // about 1.5x the normal icon; the heartbeat effect scales it further
         "icon-size": selectedIconSize(1),
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
       },
+    });
+
+    // maplibre 6: a missing image is supplied by this resolver. It stays pending until the image has been added,
+    // and every request for the same icon (several tiles ask at once) waits for the same load.
+    // Ids that are not ours (basemap images) are left alone.
+    const pending = pendingIcons.current;
+    map.setMissingStyleImageResolver(async (imageId: string) => {
+      if (!imageId.startsWith(ICON_PREFIX)) return;
+      if (map.hasImage(imageId)) return;
+
+      let load = pending.get(imageId);
+      if (!load) {
+        load = registerCategoryIcon(map, imageId).finally(() => {
+          pending.delete(imageId);
+        });
+        pending.set(imageId, load);
+      }
+      await load;
     });
 
     // Hover cursor: maplibre styles its canvas container with `cursor: grab` (and `grabbing` while pressed),
@@ -412,155 +351,122 @@ export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) 
     // (see the .poi-hover rule in the global stylesheet) always wins, including while the mouse is pressed.
     const container = map.getCanvasContainer();
 
-    const onEnter = () => {
+    // true while a map click is meant to pick a point (radius center or route start):
+    // POI / cluster clicks must then be ignored, like in the old version
+    const isPicking = () => {
       const s = usePoiStore.getState();
-      if (s.pickingCenter || s.pickingFrom) return; // keep the crosshair while picking
+      return s.pickingCenter || s.pickingFrom;
+    };
+
+    const onEnter = () => {
+      if (isPicking()) return; // keep the crosshair while picking
       container.classList.add("poi-hover");
     };
     const onLeave = () => {
       container.classList.remove("poi-hover");
     };
 
-    // click a POI -> popup with its details
-    const onPoiClick = (e: maplibregl.MapLayerMouseEvent) => {
+    // click a cluster: zoom in on it (2 levels per click, never past the zoom where real points show)
+    const onClusterClick = (e: maplibregl.MapLayerMouseEvent) => {
+      if (isPicking()) return; // the click is picking the radius center / route start
+
+      const feature = e.features?.[0];
+      if (!feature) return;
+      const coords = (feature.geometry as unknown as { coordinates: [number, number] }).coordinates;
+      map.easeTo({
+        center: coords ?? e.lngLat,
+        zoom: Math.min(map.getZoom() + 2, POI_POINTS_MINZOOM),
+        duration: 500,
+      });
+    };
+
+    // click a POI: the tile only carries a few properties, so fetch the full record by id
+    // and hand it to the details window through the store.
+    // The abort controller drops an older request when another POI is clicked quickly.
+    let detailsAbort: AbortController | null = null;
+
+    const onPoiClick = async (e: maplibregl.MapLayerMouseEvent) => {
+      if (activePageRef.current !== POI_PAGE) return;
+      if (isPicking()) return; // the click is picking the radius center / route start
+
+      const feature = e.features?.[0];
+      if (!feature) return;
+
+      // `id` is a property written by the tile route; fall back to the feature id if the route sets one
+      const id = feature.properties?.id ?? feature.id;
+      if (id === undefined || id === null) return;
+
+      // position comes from the tile geometry (the details query no longer returns geom)
+      const geom = feature.geometry as unknown as { type: string; coordinates: [number, number] };
+      const [lng, lat] =
+        geom.type === "Point" ? geom.coordinates : [e.lngLat.lng, e.lngLat.lat];
+
+      detailsAbort?.abort();
+      detailsAbort = new AbortController();
+
       try {
-        if (activePageRef.current !== POI_PAGE) return;
-        if (usePoiStore.getState().pickingCenter) return; // the click is picking the radius center
-        if (usePoiStore.getState().pickingFrom) return; // the click is picking the route start
+        const res = await fetch(POI_DETAILS_URL(id as string | number), {
+          signal: detailsAbort.signal,
+        });
+        if (!res.ok) throw new Error(`POI details failed (${res.status})`);
+        const properties = (await res.json()) as PoiProperties;
 
-        const feature = e.features?.[0];
-        if (!feature || feature.geometry.type !== "Point") return;
-
-        const [lng, lat] = feature.geometry.coordinates as [number, number];
-
-        // Use the original record from the store (the map's copy can lose null values / change types)
-        // look it up by id (fid is not unique in the data)
-        const poiId = (feature.properties as { id?: number } | null)?.id;
-        const full = usePoiStore.getState().poi.features.find((f) => f.properties.id === poiId);
-        const properties = full?.properties ?? (feature.properties as unknown as PoiProperties);
-
-        usePoiStore.getState().setSelectedPoi({ properties, lng, lat });
+        usePoiStore.getState().setSelectedPoi({ lng, lat, properties });
       } catch (err) {
-        console.warn("POI click failed:", err instanceof Error ? err.message : err);
+        if ((err as Error).name === "AbortError") return;
+        console.warn("POI details failed:", err instanceof Error ? err.message : err);
       }
     };
 
+    map.on("click", CLUSTER_LAYER, onClusterClick);
     map.on("click", POI_LAYER, onPoiClick);
+    map.on("mouseenter", CLUSTER_LAYER, onEnter);
+    map.on("mouseleave", CLUSTER_LAYER, onLeave);
     map.on("mouseenter", POI_LAYER, onEnter);
     map.on("mouseleave", POI_LAYER, onLeave);
-
-    // click a group -> zoom into the NEXT level only (all -> reg -> pro -> mun -> bgy -> POIs)
-    const groupHandlers = LEVELS.map((lvl, index) => {
-      const layerId = `poi-group-${lvl.level}`;
-      const next = nextLevelRange(index);
-
-      const onGroupClick = (e: maplibregl.MapLayerMouseEvent) => {
-        if (usePoiStore.getState().pickingCenter) return; // the click is picking the radius center
-        if (usePoiStore.getState().pickingFrom) return; // the click is picking the route start
-
-        const feature = e.features?.[0];
-        if (!feature || feature.geometry.type !== "Point") return;
-
-        const p = feature.properties as { minLng: number; minLat: number; maxLng: number; maxLat: number };
-        const [lng, lat] = feature.geometry.coordinates as [number, number];
-
-        map.resize(); // make sure the canvas matches its container before measuring
-        const hidden = hiddenHeight(map, mapPaneRef?.current); // strip hidden behind the bottom panel
-
-        const bounds = new maplibregl.LngLatBounds([p.minLng, p.minLat], [p.maxLng, p.maxLat]);
-        // fit into the visible part only: the hidden strip counts as extra bottom padding
-        const cam = map.cameraForBounds(bounds, {
-          padding: { top: 80, left: 80, right: 80, bottom: 80 + hidden },
-        });
-
-        // Fit the group's bounds, but keep the zoom inside the next level's range:
-        //  - too far out -> raised to the next level's minzoom (so it never stays on the same level)
-        //  - too far in  -> capped just under the next level's maxzoom (so it never skips a level)
-        const minZoom = next.min + ZOOM_EPS;
-        const maxZoom = next.max - ZOOM_EPS;
-        const fitZoom = cam?.zoom ?? minZoom;
-        const zoom = Math.min(Math.max(fitZoom, minZoom), maxZoom);
-        const clamped = fitZoom < minZoom || fitZoom > maxZoom;
-
-        // The marker sits at the average of its POIs, not at the middle of the bounding box.
-        //  - zoom not clamped -> the whole group fits, so centre on the bounds (group fully visible);
-        //                        cam.center already accounts for the hidden strip
-        //  - zoom clamped     -> the bounds no longer fit anyway, so centre on the clicked marker,
-        //                        shifted up by half the hidden strip so it lands in the middle of
-        //                        the VISIBLE map instead of the middle of the full canvas
-        let center: [number, number] = [lng, lat];
-        let offset: [number, number] = [0, -hidden / 2];
-        if (!clamped && cam?.center) {
-          const resolvedCenter = maplibregl.LngLat.convert(cam.center);
-          center = [resolvedCenter.lng, resolvedCenter.lat];
-          offset = [0, 0];
-        }
-
-        map.easeTo({ center, zoom, offset });
-      };
-
-      map.on("click", layerId, onGroupClick);
-      map.on("mouseenter", layerId, onEnter);
-      map.on("mouseleave", layerId, onLeave);
-
-      return { layerId, onGroupClick };
-    });
 
     return () => {
       try {
         container.classList.remove("poi-hover");
+        detailsAbort?.abort();
 
+        map.off("click", CLUSTER_LAYER, onClusterClick);
         map.off("click", POI_LAYER, onPoiClick);
+        map.off("mouseenter", CLUSTER_LAYER, onEnter);
+        map.off("mouseleave", CLUSTER_LAYER, onLeave);
         map.off("mouseenter", POI_LAYER, onEnter);
         map.off("mouseleave", POI_LAYER, onLeave);
 
-        for (const { layerId, onGroupClick } of groupHandlers) {
-          map.off("click", layerId, onGroupClick);
-          map.off("mouseenter", layerId, onEnter);
-          map.off("mouseleave", layerId, onLeave);
-        }
-
-        for (const lvl of LEVELS) {
-          if (map.getLayer(`poi-group-label-${lvl.level}`)) map.removeLayer(`poi-group-label-${lvl.level}`);
-          if (map.getLayer(`poi-group-${lvl.level}`)) map.removeLayer(`poi-group-${lvl.level}`);
-        }
         if (map.getLayer(SELECTED_ICON_LAYER)) map.removeLayer(SELECTED_ICON_LAYER);
         if (map.getLayer(SELECTED_PULSE_LAYER)) map.removeLayer(SELECTED_PULSE_LAYER);
         if (map.getSource(SELECTED_SOURCE)) map.removeSource(SELECTED_SOURCE);
         if (map.getLayer(POI_LAYER)) map.removeLayer(POI_LAYER);
-        if (map.getSource(GROUP_SOURCE)) map.removeSource(GROUP_SOURCE);
+        if (map.getLayer(CLUSTER_COUNT_LAYER)) map.removeLayer(CLUSTER_COUNT_LAYER);
+        if (map.getLayer(CLUSTER_LAYER)) map.removeLayer(CLUSTER_LAYER);
         if (map.getSource(POI_SOURCE)) map.removeSource(POI_SOURCE);
-        if (map.hasImage(DEFAULT_ICON)) map.removeImage(DEFAULT_ICON);
 
-        // images are gone with the layer cleanup, so allow them to be loaded again next time
-        triedIcons.current.clear();
+        pending.clear();
       } catch {
         // the map was already removed, so there is nothing left to clean up
       }
     };
   }, [map, mapPaneRef]);
 
-  // push new data into both sources whenever the store changes
+  // scope changed (login, logout, different user): point the source at the new tile url.
+  // setTiles clears the loaded tiles and requests them again with the new scope.
+  // Declared after the effect that adds the source, so the source exists when this first runs.
   useEffect(() => {
     if (!map) return;
-    (map.getSource(POI_SOURCE) as maplibregl.GeoJSONSource | undefined)?.setData(poi as unknown as GeoJSONData);
-    (map.getSource(GROUP_SOURCE) as maplibregl.GeoJSONSource | undefined)?.setData(groups);
-  }, [map, poi, groups]);
+    const source = map.getSource(POI_SOURCE) as maplibregl.VectorTileSource | undefined;
+    if (!source) return;
 
-  // load the svg for every category that appears in the data (only the ones not tried yet)
-  useEffect(() => {
-    if (!map) return;
-
-    const pending = collectCategoryIds(poi).filter((id) => !triedIcons.current.has(id));
-    if (pending.length === 0) return;
-    pending.forEach((id) => triedIcons.current.add(id));
-
-    // adding an image makes maplibre re-render the layer, so POIs switch from the dot to their icon
-    Promise.all(pending.map((id) => loadCategoryIcon(map, id).catch(() => false)));
-  }, [map, poi]);
+    const url = buildTilesUrl(scopeKey);
+    if (source.tiles?.[0] === url) return; // already using this scope (first run)
+    source.setTiles([url]);
+  }, [map, scopeKey]);
 
   // ----- Directions: sources + layers (declared after the POI layers exist) -----
-  // route lines sit under the POI icons, the start/end markers above them but under the selected highlight
+  // route lines sit under the POI icons, the start/end markers above them
   useEffect(() => {
     if (!map) return;
 
@@ -642,27 +548,8 @@ export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) 
     }
   }, [map, visible]);
 
-  // draw the route lines (selected one highlighted, alternatives in gray)
-  useEffect(() => {
-    if (!map) return;
-    const src = map.getSource(ROUTE_SOURCE) as maplibregl.GeoJSONSource | undefined;
-    if (!src) return;
+  
 
-    if (routes.length === 0) {
-      src.setData(EMPTY_COLLECTION);
-      return;
-    }
-
-    // ORS already returns [lng, lat], which is exactly what GeoJSON / maplibre expect
-    src.setData({
-      type: "FeatureCollection",
-      features: routes.map((r, i) => ({
-        type: "Feature",
-        properties: { selected: i === selectedRoute },
-        geometry: { type: "LineString", coordinates: r.coordinates },
-      })),
-    } as unknown as GeoJSONData);
-  }, [map, routes, selectedRoute]);
 
   // start / end markers (the end marker only shows once there is a route to point at)
   useEffect(() => {
@@ -684,6 +571,22 @@ export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) 
 
     src.setData({ type: "FeatureCollection", features } as unknown as GeoJSONData);
   }, [map, routeFrom, routeTo, routes]);
+
+    // route lines: selected route on top (blue), alternatives in gray
+  useEffect(() => {
+    if (!map) return;
+    const src = map.getSource(ROUTE_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+
+    src.setData({
+      type: "FeatureCollection",
+      features: routes.map((r, i) => ({
+        type: "Feature",
+        properties: { selected: i === selectedRoute },
+        geometry: { type: "LineString", coordinates: r.coordinates },
+      })),
+    } as unknown as GeoJSONData);
+  }, [map, routes, selectedRoute]);
 
   // zoom to the routes when a NEW set arrives (not when only the selected route changes),
   // fitted into the part of the map that is actually visible
@@ -751,6 +654,7 @@ export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) 
       }
     };
   }, [map, pickingFrom, setPickingFrom, setPickedPoint]);
+
 
   // put the selected POI into the highlight source (cleared when nothing is selected or on another page)
   useEffect(() => {

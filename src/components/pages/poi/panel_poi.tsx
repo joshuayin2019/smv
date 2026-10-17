@@ -10,8 +10,9 @@ import {
 import type { UseSplitterReturnValue } from '@mantine/hooks';
 
 import { ACCENT, BORDER, NAVY, NAVY_DEEP, PANEL_BG } from '@/lib/theme_colors';
-import DataTablePOI from './datatable_poi';
+import DataTablePOI from './data_table_poi';
 import SummaryPOI from './summary_poi';
+
 
 type PoiPanelProps = {
   onNormal: () => void;
