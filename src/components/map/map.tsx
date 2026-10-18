@@ -107,7 +107,7 @@ function add3dBuildings(map: maplibregl.Map) {
       source: "openfreemap",
       "source-layer": "building",
       type: "fill-extrusion",
-      minzoom: 15,
+      minzoom: 17,
       filter: ["!=", ["get", "hide_3d"], true],
       paint: {
         "fill-extrusion-color": [

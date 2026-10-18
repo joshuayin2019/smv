@@ -5,7 +5,9 @@ type Ctx = { params: Promise<{ z: string; x: string; y: string }> };
 
 // The tile url contains the scope, so the browser cache is automatically per scope.
 // Browser keeps tiles for 5 minutes, so panning back over an area does not refetch.
-const CACHE_CONTROL = "private, max-age=300";
+// the server-side tile cache keeps tiles for 30 min, so match it
+const CACHE_CONTROL = "private, max-age=1800, stale-while-revalidate=3600";
+//const CACHE_CONTROL = "private, max-age=300";
 
 type ScopeItem = { scope_level: number; code: string | null };
 

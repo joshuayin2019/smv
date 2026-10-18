@@ -20,7 +20,7 @@ import { IconChevronDown, IconStack2Filled } from "@tabler/icons-react";
 import { useMapStore } from "@/stores/map_stores";
 import { ACCENT, BORDER, NAVY, NAVY_DEEP } from "@/lib/theme_colors";
 import { setBasemap, type Basemap } from "@/lib/basemap";
-//import { ZONALS, MIN_ZOOM, overviewColor } from "@/components/pages/smv/map_smv"; // adjust path
+import { ZONALS, MIN_ZOOM, overviewColor } from "@/components/pages/smv/map_smv"; // adjust path
 
 const POSITION = { position: "absolute", top: 10, right: 10, zIndex: 3 } as const;
 
@@ -45,18 +45,17 @@ export default function LayerControl() {
   // true while the map shows the single-color SMV overview (zoom < MIN_ZOOM).
   // Storing a boolean means React only re-renders when the mode actually flips.
   const [overview, setOverview] = useState(true);
-  
-  // useEffect(() => {
-  //   if (!map) return;
-  //   const update = () => setOverview(map.getZoom() < MIN_ZOOM);
-  //   update();
-  //   map.on("zoom", update);
-  //   return () => {
-  //     map.off("zoom", update);
-  //   };
-  // }, [map]);
+  useEffect(() => {
+    if (!map) return;
+    const update = () => setOverview(map.getZoom() < MIN_ZOOM);
+    update();
+    map.on("zoom", update);
+    return () => {
+      map.off("zoom", update);
+    };
+  }, [map]);
 
-  //const overviewSwatch = overviewColor(smv.enabled);
+  const overviewSwatch = overviewColor(smv.enabled);
 
   // Collapsed: just the icon button
   if (!opened) {
@@ -185,7 +184,7 @@ export default function LayerControl() {
                         marginTop: 6,
                         flexShrink: 0,
                         borderRadius: 2,
-                        //background: overviewSwatch,
+                        background: overviewSwatch,
                       }}
                     />
                     <Text fz={11} c={NAVY} lh={1.35}>
@@ -197,7 +196,7 @@ export default function LayerControl() {
                     size="compact-xs"
                     variant="light"
                     fullWidth
-                    //onClick={() => map?.easeTo({ zoom: MIN_ZOOM, duration: 600 })}
+                    onClick={() => map?.easeTo({ zoom: MIN_ZOOM, duration: 600 })}
                   >
                     Zoom in to see type colors
                   </Button>
@@ -212,7 +211,7 @@ export default function LayerControl() {
                 {overview ? "Show roads with:" : "Zonal types"}
               </Text>
 
-              {/* {ZONALS.map((z) => (
+              {ZONALS.map((z) => (
                 <Checkbox
                   key={z.key}
                   size="xs"
@@ -239,7 +238,7 @@ export default function LayerControl() {
                   checked={smv.enabled[z.key]}
                   onChange={(e) => toggleZonal(z.key, e.currentTarget.checked)}
                 />
-              ))} */}
+              ))}
 
               <Text fz={11} c="dimmed" mt={4}>
                 Opacity

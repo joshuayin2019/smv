@@ -9,6 +9,12 @@ import PoiPanel from '../pages/poi/panel_poi';
 import { PoiHideTab } from '../pages/poi/panel_poi';
 import PoiRadius from '../pages/poi/radius_poi';
 
+// SMV
+import SmvLayer from '../pages/smv/map_smv';
+import SmvPanel from '../pages/smv/panel_smv';
+import { SmvHideTab } from '../pages/smv/panel_smv';
+import SmvRadiusLayer from '../pages/smv/smv_radius_layer';
+
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
 type Sizes = NonNullable<SplitterProps['sizes']>;
@@ -64,6 +70,15 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
           />
       );
 
+      case 'Schedule of Market Value':
+        return (
+          <SmvPanel
+            onNormal={showNormal}
+            onFull={showFull}
+            onHide={hidePanel}
+          />
+      );
+
       
 
 
@@ -108,6 +123,8 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             <PoiRadius />
 
             {/* SMV */}
+            <SmvLayer {...smv} />
+            <SmvRadiusLayer />
 
           </Box>
         </Splitter.Pane>
@@ -122,7 +139,7 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
       {!isOpen && (
         <>
         {activePage === 'Point of Interest' && <PoiHideTab onShow={showNormal} />}
-         
+        {activePage === 'Schedule of Market Value' && <SmvHideTab onShow={showNormal} />}
           
         </>
       )}
