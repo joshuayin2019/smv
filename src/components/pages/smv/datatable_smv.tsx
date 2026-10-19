@@ -1,3 +1,4 @@
+// FILE: src/components/.../datatable_smv.tsx  (replace your server-side SMV table; keep its current location)
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActionIcon,
@@ -355,7 +356,6 @@ export default function DataTableSMV() {
   const browsable = Math.max(data?.browsable ?? 0, seen);
   const capped = data?.capped ?? false;
   const totalLabel = data ? `${total.toLocaleString()}${capped ? '+' : ''}` : '…';
-  //const limited = !!data && capped; // the notice only appears for results beyond the count cap
   const limited = !!data && (capped || total > browsable);
 
   // ----- A road clicked on the map: jump to the page where it sits in the current result ------
@@ -365,30 +365,70 @@ export default function DataTableSMV() {
   latest.current = { baseKey, pageKey, pageSize, rows: records };
   const selectedId = selected?.id;
 
-  useEffect(() => {
-    if (selectedId === undefined || selectedId === null) return;
+  // Ask the server where the road sits and move to that page.
+  // A road deeper than the pageable rows (MAX_BROWSABLE) cannot be paged to: in that case
+  // the table narrows itself to the road's barangay + municipality (see the effects below).
+  const [narrowFor, setNarrowFor] = useState<string | null>(null);
+  const relocate = useRef(false); // true = locate again as soon as the narrowed query is active
+
+  const locateRoad = (id: string, signal: AbortSignal) => {
     const cur = latest.current;
-    if (cur.rows.some((r) => String(r.id) === String(selectedId))) return; // already on this page
+    if (cur.rows.some((r) => String(r.id) === id)) return; // already on this page
 
     const sp = new URLSearchParams(cur.baseKey);
-    sp.set('id', String(selectedId));
+    sp.set('id', id);
     sp.set('pageSize', String(cur.pageSize));
 
-    const ctrl = new AbortController();
-    fetch(`${LOCATE_URL}?${sp}`, { signal: ctrl.signal })
+    fetch(`${LOCATE_URL}?${sp}`, { signal })
       .then((res) => (res.ok ? (res.json() as Promise<LocateResponse>) : null))
       .then((loc) => {
-        // not found = filtered out of the table; not reachable = deeper than the table pages
-        if (loc?.found && loc.reachable && loc.page) {
+        if (!loc?.found) return; // filtered out of the table: nothing to jump to
+        if (loc.reachable && loc.page) {
           setPageState({ key: cur.pageKey, page: loc.page });
+        } else {
+          setNarrowFor(id); // too deep to page to: narrow the result
         }
       })
       .catch(() => {
         // aborted or failed: the table stays where it is
       });
+  };
 
+  // A road is selected (map click): jump to its page
+  useEffect(() => {
+    if (selectedId === undefined || selectedId === null) return;
+    const ctrl = new AbortController();
+    locateRoad(String(selectedId), ctrl.signal);
     return () => ctrl.abort();
   }, [selectedId]);
+
+  // The road is too deep: filter by its barangay + municipality. The full record (with these
+  // names) is loaded by the map after the click, so wait until it has them.
+  useEffect(() => {
+    if (narrowFor === null) return;
+    if (!selected || String(selected.id) !== narrowFor) {
+      setNarrowFor(null); // another road was selected meanwhile
+      return;
+    }
+    if (!selected.bgy_name && !selected.mun_name) return; // details still loading
+
+    const bgy = selected.bgy_name ?? '';
+    const mun = selected.mun_name ?? '';
+    setNarrowFor(null);
+    if (filters.bgy_name === bgy && filters.mun_name === mun) return; // already narrowed
+
+    relocate.current = true;
+    setFilters((cur) => ({ ...cur, bgy_name: bgy, mun_name: mun }));
+  }, [narrowFor, selected]);
+
+  // The narrowed query is active (baseKey changed): locate again, now it is within reach
+  useEffect(() => {
+    if (!relocate.current || selectedId === undefined || selectedId === null) return;
+    relocate.current = false;
+    const ctrl = new AbortController();
+    locateRoad(String(selectedId), ctrl.signal);
+    return () => ctrl.abort();
+  }, [baseKey]);
 
   // Share the query + match count with the rest of the app
   useEffect(() => {
@@ -463,8 +503,11 @@ export default function DataTableSMV() {
     return cols;
   }, [visible, filters, numFilters, debouncedRadius]);
 
-  // Clicking a row marks it as selected (the map reads selectedSmv to zoom to it)
+  // Clicking a row marks it as selected (the map reads selectedSmv to zoom to it).
+  // Clicking the row that is already selected does nothing, so the full record (with bbox)
+  // that the map loaded is not overwritten by this row.
   const handleRowClick = (row: SmvRow) => {
+    if (String(useSmvStore.getState().selectedSmv?.id) === String(row.id)) return;
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { distance_m, ...record } = row;
     setSelectedSmv(record as SmvRecord);
@@ -607,14 +650,6 @@ export default function DataTableSMV() {
         )}
       </Group>
 
-      {/* Shown when the result is bigger than what can be counted and paged */}
-      {/* {limited && (
-        <Text fz={11} c="dimmed" px="xs" py={4} bg={PANEL_BG} style={{ flexShrink: 0 }}>
-          {totalLabel} matches. Only the first {browsable.toLocaleString()} can be paged: use the search,
-          filters or radius to narrow the result.
-        </Text>
-      )} */}
-
       {/* Shown when the result is bigger than what can be paged */}
       {limited && (
         <Text fz={11} c="dimmed" px="xs" py={4} bg={PANEL_BG} style={{ flexShrink: 0 }}>
@@ -622,10 +657,6 @@ export default function DataTableSMV() {
           filters or radius to narrow the result.
         </Text>
       )}
-
-
-
-    
 
       {/* Table area */}
       <Box pos="relative" style={{ flex: 1, minHeight: 0 }}>

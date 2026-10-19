@@ -8,7 +8,7 @@ import { useMapStore } from "@/stores/map_stores";
 import { isWebglSupported } from "@/lib/webgl";
 import { ACCENT, NAVY_DEEP } from "@/lib/theme_colors";
 import LayerControl from "./layer_control";
-//import MapWalk from "./map_walk";
+import MapWalk from "./map_walk";
 
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
 
@@ -312,7 +312,7 @@ export default function Map({ active = true }: { active?: boolean }) {
 
       {/* these need a working map, so hide them when there is none */}
       {!error && <LayerControl />}
-      {/* {!error && <MapWalk />} */}
+      {!error && <MapWalk />}
 
       <div
         style={{

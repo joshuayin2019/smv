@@ -22,7 +22,7 @@ import { ACCENT, BORDER, NAVY, NAVY_DEEP } from "@/lib/theme_colors";
 import { setBasemap, type Basemap } from "@/lib/basemap";
 import { ZONALS, MIN_ZOOM, overviewColor } from "@/components/pages/smv/map_smv"; // adjust path
 
-const POSITION = { position: "absolute", top: 10, right: 10, zIndex: 3 } as const;
+const POSITION = { position: "absolute", top: 10, right: 10, zIndex: 5 } as const;
 
 export default function LayerControl() {
   const [opened, setOpened] = useState(false); // whole panel
@@ -92,7 +92,9 @@ export default function LayerControl() {
         overflow: "hidden",
         borderColor: BORDER,
         borderTop: `3px solid ${ACCENT}`,
+
       }}
+      
     >
       {/* Title bar */}
       <Group
@@ -203,12 +205,12 @@ export default function LayerControl() {
                 </Box>
               ) : (
                 <Text fz={11} c="dimmed">
-                  Colored by zonal type
+                  Colored by classification
                 </Text>
               )}
 
               <Text fz={11} fw={600} c={NAVY}>
-                {overview ? "Show roads with:" : "Zonal types"}
+                {overview ? "Show roads with:" : "SMV Types"}
               </Text>
 
               {ZONALS.map((z) => (

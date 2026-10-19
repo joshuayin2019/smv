@@ -1,5 +1,7 @@
+// FILE: src/lib/pages/smv/tile_controller.ts  (replace your tile controller; adjust the path to where yours lives)
 import { conn } from "@/lib/db";
 import type { Scope } from "@/stores/global_stores";
+import { ROW_SELECT } from "@/lib/pages/smv/smv_table_sql";
 
 // scope_level: 1 = all, 2 = region, 3 = province, 4 = municipality
 const LEVEL_COLUMN: Record<number, string> = {
@@ -55,21 +57,12 @@ function simplifyPxFor(z: number): number {
   return 0;
 }
 
-// Below this zoom, only send the few attributes the single-color layer needs
-const FULL_DETAIL_ZOOM = 16;
-
-const LITE_COLS = `x.id, x.fclass, x.r, x.c, x.i, x.a`;
-
-const FULL_COLS = `
-  x.id, x.osm_id, x.fclass, x.reg_code, x.pro_code, x.mun_code, x.bgy_code,
-  x.reg_name, x.pro_name, x.mun_name, x.bgy_name,
-  x.district, x.street, x.zone, x.smv_year,
-  x.r, x.c, x.i, x.a,
-  x.zv_rr, x.zv_cr, x.zv_i, x.zv_x, x.zv_rc, x.zv_cc, x.zv_ps
-`;
+// Tiles carry only what the map needs to DRAW and to identify a road:
+// id (to select), fclass (line width in the overview), r/c/i/a (colors, widths, filters).
+// Everything else is loaded by id when a road is selected (see loadSMVById).
+const TILE_COLS = `x.id, x.fclass, x.r, x.c, x.i, x.a`;
 
 const tileSql = (scopeSql: string, z: number) => {
-  const cols = z < FULL_DETAIL_ZOOM ? LITE_COLS : FULL_COLS;
   const px = simplifyPxFor(z);
 
   // mpp = meters per screen pixel at this zoom (512px tiles)
@@ -87,7 +80,7 @@ const tileSql = (scopeSql: string, z: number) => {
     ),
     mvt AS (
       SELECT
-        ${cols},
+        ${TILE_COLS},
         ST_AsMVTGeom(${geomExpr}, b.geom, 4096, 64, true) AS geom
       FROM data.smv x, bounds b
       WHERE x.geom && ST_Transform(b.geom, 4326)
@@ -124,6 +117,30 @@ export async function loadSMVMap(z: number, x: number, y: number, scope: Scope[]
     const tile: Buffer | null = rows[0]?.tile ?? null;
 
     return { success: true, data: tile && tile.length > 0 ? tile : null };
+  } catch (error) {
+    console.warn("tile_controller.ts:", error);
+    return { success: false, message: "Internal server error", status: 500 };
+  }
+}
+
+/* ---------------- One road, full attributes ---------------- */
+
+// Same fields (and the same bbox of the WHOLE road) that the table rows have: ROW_SELECT
+export async function loadSMVById(id: string, scope: Scope[]) {
+  try {
+    if (!/^\d{1,15}$/.test(id)) return { success: false, message: "Bad id", status: 400 };
+
+    // the scope filter still applies, so nobody can fetch a road outside their area
+    const filter = buildScopeFilter(scope, 2); // $1 is the id
+    if (!filter) return { success: false, message: "Forbidden", status: 403 };
+
+    const { rows } = await conn.query(
+      `SELECT ${ROW_SELECT} FROM data.smv x WHERE x.id = $1${filter.sql} LIMIT 1`,
+      [Number(id), ...filter.params]
+    );
+    if (!rows[0]) return { success: false, message: "Not found", status: 404 };
+
+    return { success: true, data: rows[0] };
   } catch (error) {
     console.warn("tile_controller.ts:", error);
     return { success: false, message: "Internal server error", status: 500 };

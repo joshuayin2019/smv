@@ -1,10 +1,11 @@
+// FILE: src/components/.../smv_layer.tsx  (replace your SMV map layer file; keep its current location)
 import { useEffect, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import { useMapStore } from "@/stores/map_stores";
 import { useGlobalStore, type Scope } from "@/stores/global_stores";
 import { useSmvStore, type SmvRecord } from "@/stores/smv_stores";
 import { basePath } from "@/lib/config";
-//import SmvDetailsWindow from "./smv_details_window";
+import SmvDetailsWindow from "./smv_details_window";
 
 type Expr = maplibregl.ExpressionSpecification;
 
@@ -147,9 +148,14 @@ const tilesUrl = (scope: Scope[]) =>
     JSON.stringify(scope)
   )}`;
 
-// Where to fly to when a road is picked in the table.
+// Full attributes of one road (street, names, zonal values, bbox...)
+const detailUrl = (id: string, scope: Scope[]) =>
+  `${window.location.origin}${basePath}/api/pages/smv/${encodeURIComponent(id)}?scope=${encodeURIComponent(
+    JSON.stringify(scope)
+  )}`;
+
+// Where to fly to when a road is picked.
 // Tries: GeoJSON geometry, then bbox [minX, minY, maxX, maxY], then lng/lat fields.
-// Adjust this to match the fields your SmvRecord really has.
 type Target = { center: [number, number]; bounds?: [[number, number], [number, number]] };
 
 const flatten = (c: any): number[][] =>
@@ -222,9 +228,12 @@ export default function SmvLayer({
   const selectedSmv = useSmvStore((s) => s.selectedSmv);
 
   // Set by a map click: the click point + the clicked road's extent (from the tile feature),
-  // so effect 7 can zoom to the road
+  // so effect 7 can zoom to the road right away
   const clickPosRef = useRef<{ lngLat: maplibregl.LngLat; target: Target | null } | null>(null);
   const [clickTick, setClickTick] = useState(0); // re-runs the zoom effect even when the same road is clicked again
+
+  // id of the road the map already zoomed to (so the details arriving later do not zoom again)
+  const zoomedRef = useRef<string | null>(null);
 
   // 1) Add the source + layers, and the click / hover handlers
   useEffect(() => {
@@ -336,8 +345,9 @@ export default function SmvLayer({
       }
     }
 
-    // Select on click (highlight + details window). Only the multicolor layers are clickable:
-    // their tile features carry the road's attributes.
+    // Select on click. Only the multicolor layers are clickable.
+    // The tile only has id, fclass, r, c, i, a: that is enough to highlight and zoom at once.
+    // The full attributes are loaded by effect 8 (it reacts to any selection without a bbox).
     const onClick = (e: maplibregl.MapMouseEvent) => {
       if (useSmvStore.getState().pickingCenter) return; // the click is picking the radius center
 
@@ -346,13 +356,9 @@ export default function SmvLayer({
         useSmvStore.getState().setSelectedSmv(null); // clicked empty map: clear the highlight
         return;
       }
-      const p = f.properties ?? {};
 
-      // The table is server-side now, so the tile's own properties are the record.
-      // (If something still fills the full list in the store, that record is used instead.)
-      const full = useSmvStore.getState().smv.find((r) => String(r.id) === String(p.id));
       clickPosRef.current = { lngLat: e.lngLat, target: geometryTarget(f.geometry) }; // used by effect 7
-      useSmvStore.getState().setSelectedSmv(full ?? (p as unknown as SmvRecord));
+      useSmvStore.getState().setSelectedSmv(f.properties as unknown as SmvRecord);
       setClickTick((t) => t + 1);
     };
 
@@ -393,8 +399,6 @@ export default function SmvLayer({
         // canvas is gone together with the map
       }
     };
-
-
   }, [map, scopeKey]);
 
   // 2) Apply visibility, opacity and per-zonal toggles.
@@ -439,46 +443,6 @@ export default function SmvLayer({
       if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
     };
   }, [map]);
-
-  // 4) Keep the SMV layers above the basemap but below the POI layers
-  // useEffect(() => {
-  //   if (!map || !scopeSmv) return;
-
-  //   // bottom -> top; the highlight sits above the normal lines, the first zonal on top of each group
-  //   const order = [
-  //     LOW_ID,
-  //     ...[...SMV_LAYER_IDS].reverse(),
-  //     HL_GLOW_ID,
-  //     HL_CASING_ID,
-  //     ...[...HL_IDS].reverse(),
-  //   ];
-  //   const TOP_ID = HL_IDS[0]; // topmost SMV layer
-  //   const POI_BOTTOM = "poi-group-all"; // lowest POI layer (added by PoiLayer)
-
-  //   const place = () => {
-  //     const style = map.getStyle();
-  //     if (!style) return; // map was already removed
-  //     const ids = style.layers.map((l) => l.id);
-  //     if (!ids.includes(TOP_ID)) return; // SMV layers not added yet
-
-  //     const before = ids.includes(POI_BOTTOM) ? POI_BOTTOM : undefined;
-
-  //     // already in place -> stop, so moveLayer doesn't re-trigger the events forever
-  //     const top = ids.indexOf(TOP_ID);
-  //     if (before ? top + 1 === ids.indexOf(before) : top === ids.length - 1) return;
-
-  //     order.forEach((id) => map.getLayer(id) && map.moveLayer(id, before));
-  //   };
-
-  //   place();
-  //   map.on("styledata", place);
-  //   map.on("idle", place); // fires after every render, so it also catches layers added later by PoiLayer
-
-  //   return () => {
-  //     map.off("styledata", place);
-  //     map.off("idle", place);
-  //   };
-  // }, [map, scopeKey]);
 
   // 4) Keep the SMV layers above the basemap but below ALL POI layers
   useEffect(() => {
@@ -598,20 +562,27 @@ export default function SmvLayer({
     return () => cancelAnimationFrame(raf);
   }, [map, selectedId]);
 
-  // 7) Zoom to the selected road, for BOTH sources of selection (map click or table row).
-  //    The details themselves are shown by <SmvDetailsWindow /> below.
+  // 7) Zoom to the selected road, once per selection, for BOTH sources of selection.
+  //    - map click: zooms right away from the clicked tile feature
+  //    - table row click: there is no geometry yet, so it waits until effect 8 brings the bbox
+  //    The details arriving after a map click do NOT zoom a second time.
   useEffect(() => {
     if (!map || !scopeSmv || !selectedSmv) {
       clickPosRef.current = null;
+      zoomedRef.current = null;
       return;
     }
 
+    const id = String(selectedSmv.id);
     const click = clickPosRef.current;
-    clickPosRef.current = null;
 
     // Best extent we have: the record's own location, else the clicked tile feature
     const t = recordTarget(selectedSmv) ?? click?.target ?? null;
-    if (!t) return;
+    if (!t) return; // table click: wait for the bbox
+    if (zoomedRef.current === id && !click) return; // details arrived after we already zoomed
+
+    clickPosRef.current = null;
+    zoomedRef.current = id;
 
     // fit the whole road, never zoom out below the multicolor zoom
     const cam = t.bounds ? map.cameraForBounds(t.bounds, { padding: 120, maxZoom: 19 }) : undefined;
@@ -622,7 +593,29 @@ export default function SmvLayer({
     });
   }, [map, scopeKey, selectedSmv, clickTick]);
 
+  // 8) Load the full attributes of the selected road when the selection does not have them yet
+  //    (a map click only has the light tile properties, a table row has no bbox).
+  //    The full record has a bbox, so this runs once per selected road.
+  useEffect(() => {
+    if (!scopeSmv || selectedId === null) return;
+    if (useSmvStore.getState().selectedSmv?.bbox) return; // already the full record
+
+    const ctrl = new AbortController();
+    fetch(detailUrl(String(selectedId), scopeSmv), { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        const cur = useSmvStore.getState().selectedSmv;
+        if (!res?.data || String(cur?.id) !== String(selectedId)) return; // stale or failed
+        useSmvStore.getState().setSelectedSmv(res.data as SmvRecord);
+      })
+      .catch(() => {
+        // aborted or failed: the selection stays as it is
+      });
+
+    return () => ctrl.abort(); // a new selection cancels the old request
+  }, [selectedId, scopeKey]);
+
   // the details window floats above the map (rendered in a portal), so it can live here
   //return <SmvDetailsWindow zonals={ZONALS} />;
-  return null;
+  return <SmvDetailsWindow zonals={ZONALS} />;
 }

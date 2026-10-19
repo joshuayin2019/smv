@@ -1,3 +1,4 @@
+// FILE: src/stores/smv_stores.ts  (replace your store; this is the new version, unchanged from the one you pasted)
 import { create } from "zustand";
 
 export type SmvRecord = {
