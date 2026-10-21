@@ -1,112 +1,75 @@
 import { useEffect } from "react";
-import { useGlobalStore } from "@/stores/global_stores";
-
-
-import { poi_url, smv_url  } from "@/lib/config";
+import { region_url, province_url  } from "@/lib/config";
 import { trackProgress } from "@/lib/progress";
+import { useRegionStore } from "@/stores/boundary/region_stores";
+import { useProvinceStore } from "@/stores/boundary/province_stores";
 
-//const poi_url = `${basePath}/api/pages/poi`;
-//const smv_url = `${basePath}/api/pages/smv`;
 
 export default function MapDataManagement() {
-    const userId = useGlobalStore((s) => s.auth?.user_id);
+    const setRegions = useRegionStore((s) => s.setRegions);
+    const setProvince = useProvinceStore((s) => s.setProvince);
 
+    // 1) Region (one-time load)
+    useEffect(() => {
+        if (useRegionStore.getState().regions.length > 0) return;
 
+        const controller = new AbortController();
 
-    // 1) POI
-    // useEffect(() => {
-    //     console.log(scopePoi);
-    //     if (userId == null) {
-    //         clearPoi();
-    //         return;
-    //     }
-    //     if (!scopePoi) return;
+        trackProgress(async () => {
+            try {
+                const response = await fetch(region_url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ data: {}, mode: "loadregion" }),
+                    signal: controller.signal,
+                });
+                const data = await response.json();
 
-    //     const controller = new AbortController();
+                if (!response.ok) {
+                    throw new Error(
+                        typeof data?.message === "string" ? data.message : JSON.stringify(data)
+                    );
+                }
 
-    //     trackProgress(async () => {
-    //         try {
-    //             const response = await fetch(poi_url, {
-    //                 method: "POST",
-    //                 headers: { "Content-Type": "application/json" },
-    //                 body: JSON.stringify({ data: scopePoi, mode: "loadpoi" }),
-    //                 signal: controller.signal,
-    //             });
-    //             const data = await response.json();
+                setRegions(data);
+            } catch (err) {
+                if (err instanceof DOMException && err.name === "AbortError") return;
+                console.log(err instanceof Error ? err.message : err);
+            }
+        });
 
-    //             if (!response.ok) {
-    //                 throw new Error(
-    //                     typeof data?.message === "string" ? data.message : JSON.stringify(data)
-    //                 );
-    //             }
-    //             setPoi(data as PoiCollection);
-    //             //console.log(data);
-    //         } catch (err) {
-    //             if (err instanceof DOMException && err.name === "AbortError") return;
-    //             console.log(err instanceof Error ? err.message : err);
-    //         }
-    //     });
+        return () => controller.abort();
+    }, [setRegions]);
 
-    //     return () => controller.abort();
-    // }, [userId, scopeKey_poi]);
+    //Province
+    useEffect(() => {
+        if (useRegionStore.getState().regions.length > 0) return;
 
-    // 2) SMV
-    // useEffect(() => {
-    //     if (userId == null) {
-    //         clearSmv();
-    //         return;
-    //     }
-    //     if (!scopeSmv) return;
+        const controller = new AbortController();
 
-    //     const controller = new AbortController();
+        trackProgress(async () => {
+            try {
+                const response = await fetch(province_url, {
+                    signal: controller.signal,
+                });
+                const data = await response.json();
 
-    //     trackProgress(async () => {
-    //         try {
-    //             setSmvLoading(true);
-    //             const response = await fetch(smv_url, {
-    //                 method: "POST",
-    //                 headers: { "Content-Type": "application/json" },
-    //                 body: JSON.stringify({ data: scopeSmv, mode: "loadsmv" }),
-    //                 signal: controller.signal,
-    //             });
-    //             const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(
+                        typeof data?.message === "string" ? data.message : JSON.stringify(data)
+                    );
+                }
 
-    //             if (!response.ok) {
-    //                 throw new Error(
-    //                     typeof data?.message === "string" ? data.message : JSON.stringify(data)
-    //                 );
-    //             }
+                setProvince(data);
+            } catch (err) {
+                if (err instanceof DOMException && err.name === "AbortError") return;
+                console.log(err instanceof Error ? err.message : err);
+            }
+        });
 
-    //             const rows = Array.isArray(data) ? data : data.rows ?? [];
-    //             setSmvRows(rows);
-    //         } catch (err) {
-    //             if (err instanceof DOMException && err.name === "AbortError") return;
-    //             console.log(err);
-    //             setSmvRows([]);
-    //         } finally {
-    //             if (!controller.signal.aborted) setSmvLoading(false);
-    //         }
-    //     });
+        return () => controller.abort();
+    }, [setProvince]);
 
-    //     return () => controller.abort();
-    // }, [userId, scopeKey_smv]);
-
-    // 3) third dataset: same pattern
-    // useEffect(() => {
-    //     if (userId == null) return;
-    //     const controller = new AbortController();
-
-    //     trackProgress(async () => {
-    //         try {
-    //             // fetch(..., { signal: controller.signal })
-    //         } catch (err) {
-    //             if (err instanceof DOMException && err.name === "AbortError") return;
-    //             console.log(err);
-    //         }
-    //     });
-
-    //     return () => controller.abort();
-    // }, [userId]);
 
     return null;
 }

@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import {
   IconChevronDown,
-  IconChevronRight,
+IconChevronRight,
   IconChevronUp,
   IconClipboardText,
   IconInfoCircle,
   IconLogout,
   IconUser,
+  IconMap,
+  IconBuildingCommunity,
+  IconBuilding,
+  IconHome2,
   type Icon,
 } from '@tabler/icons-react';
 import {
@@ -72,7 +76,15 @@ const SECTIONS: NavSection[] = [
       { label: 'Year Built of Buildings', icon: IconClipboardText },
     ],
   },
-
+  {
+    label: 'Administrative Divisions',
+      items: [
+        { label: 'Region', icon: IconMap },
+        { label: 'Province', icon: IconBuildingCommunity },
+        { label: 'City / Municipality', icon: IconBuilding },
+        { label: 'Barangay', icon: IconHome2 },
+      ],
+  },
   { label: 'User Management', items: [], link: true, adminOnly: true },
   {
     label: 'Example',

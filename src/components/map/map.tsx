@@ -69,6 +69,28 @@ function hideBasemapPois(map: maplibregl.Map) {
   }
 }
 
+// Hide the basemap's own administrative boundary lines and their names,
+// so they don't clash with our own boundary layers.
+// To find the exact layer ids of your style, run once:
+//   console.log(map.getStyle().layers.filter((l: any) => l["source-layer"] === "place").map((l) => l.id));
+function hideBasemapBoundaries(map: maplibregl.Map) {
+  const layers = map.getStyle().layers ?? [];
+  for (const layer of layers) {
+    const sourceLayer = (layer as any)["source-layer"];
+
+    // boundary lines (country / state / province / municipality)
+    const isBoundaryLine = sourceLayer === "boundary" || layer.id.startsWith("boundary");
+
+    // their names (country / state / region labels). City, town and village names stay.
+    // To hide every place name, use: sourceLayer === "place"
+    const isAdminLabel = sourceLayer === "place" && /country|state|region|province/i.test(layer.id);
+
+    if (isBoundaryLine || isAdminLabel) {
+      map.setLayoutProperty(layer.id, "visibility", "none");
+    }
+  }
+}
+
 // The Bright style's road shield layers have filters that fail on the tile data
 // ("Expected value to be of type number, but found null"). Remove them.
 function removeBrokenShieldLayers(map: maplibregl.Map) {
@@ -221,6 +243,7 @@ export default function Map({ active = true }: { active?: boolean }) {
     map.on("load", () => {
       removeBrokenShieldLayers(map);
       hideBasemapPois(map);
+      hideBasemapBoundaries(map);
       add3dBuildings(map);
       updateZoom();
       setMap(map);

@@ -15,6 +15,19 @@ import SmvPanel from '../pages/smv/panel_smv';
 import { SmvHideTab } from '../pages/smv/panel_smv';
 import SmvRadiusLayer from '../pages/smv/smv_radius_layer';
 
+//Boundary
+import RegionLayer from '../pages/boundary/region/region_layer';
+import RegionPanel from '../pages/boundary/region/panel_region';
+import { RegionHideTab } from '../pages/boundary/region/panel_region';
+
+import ProvinceLayer from '../pages/boundary/province/province_layer';  
+import ProvincePanel from '../pages/boundary/province/panel_province';
+import { ProvinceHideTab } from '../pages/boundary/province/panel_province';
+
+
+import MunicipalityLayer from '../pages/boundary/city/municipality_layer';
+import BarangayLayer from '../pages/boundary/barangay/barangay_layer';
+
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
 type Sizes = NonNullable<SplitterProps['sizes']>;
@@ -79,6 +92,26 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
           />
       );
 
+
+      case 'Region':
+        return (
+          <RegionPanel
+            onNormal={showNormal}
+            onFull={showFull}
+            onHide={hidePanel}
+          />
+      );
+
+      case 'Province':
+        return (
+          <ProvincePanel
+            onNormal={showNormal}
+            onFull={showFull}
+            onHide={hidePanel}
+          />
+      );
+      
+
       
 
 
@@ -94,7 +127,12 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
       setSizes(SIZES_NORMAL);
     } else if(activePage === 'Schedule of Market Value'){
       setSizes(SIZES_NORMAL);
+    } else if(activePage === 'Region'){
+      setSizes(SIZES_NORMAL);
+    } else if(activePage === 'Province'){
+      setSizes(SIZES_NORMAL);
     }
+    
   }, [activePage]);
 
   return (
@@ -119,12 +157,17 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             <Map active={showMap} />
 
             {/* POI */}
-            <PoiLayer mapPaneRef={mapPaneRef} visible={poiVisible} />
-            <PoiRadius />
+            {/* <PoiLayer mapPaneRef={mapPaneRef} visible={poiVisible} />
+            <PoiRadius /> */}
 
             {/* SMV */}
-            <SmvLayer {...smv} />
-            <SmvRadiusLayer />
+            {/* <SmvLayer {...smv} />
+            <SmvRadiusLayer /> */}
+
+            <RegionLayer />
+            <ProvinceLayer />
+            <MunicipalityLayer />
+            <BarangayLayer />
 
           </Box>
         </Splitter.Pane>
@@ -140,7 +183,10 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
         <>
         {activePage === 'Point of Interest' && <PoiHideTab onShow={showNormal} />}
         {activePage === 'Schedule of Market Value' && <SmvHideTab onShow={showNormal} />}
-          
+        {activePage === 'Region' && <RegionHideTab onShow={showNormal} />}
+        {activePage === 'Province' && <ProvinceHideTab onShow={showNormal} />}
+
+        
         </>
       )}
     </Box>
