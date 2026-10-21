@@ -1,3 +1,4 @@
+// FILE: src/components/.../layer_control.tsx
 "use client";
 import { useEffect, useState } from "react";
 import {
@@ -21,6 +22,7 @@ import {
 } from "@mantine/core";
 import { IconChevronDown, IconStack2Filled } from "@tabler/icons-react";
 import { useMapStore, type BoundaryType } from "@/stores/map_stores";
+import { useGlobalStore } from "@/stores/global_stores";
 import { ACCENT, BORDER, NAVY, NAVY_DEEP } from "@/lib/theme_colors";
 import { setBasemap, type Basemap } from "@/lib/basemap";
 import { ZONALS, MIN_ZOOM, overviewColor } from "@/components/pages/smv/map_smv"; // adjust path
@@ -30,6 +32,17 @@ const BOUNDARY_MIN_ZOOM: Partial<Record<BoundaryType, number>> = {
   municipality: 10,
   barangay: 14,
 };
+
+// Which boundary radio belongs to which page. Tolerant match, so "Region", "City / Municipality",
+// "boundary/city" ... all work. Pages that are not a boundary page return null (radio is left alone).
+function boundaryTypeFromPage(page: string): BoundaryType | null {
+  const p = page.toLowerCase();
+  if (p.includes("barangay")) return "barangay";
+  if (p.includes("municipal") || p.includes("city")) return "municipality";
+  if (p.includes("province")) return "province";
+  if (p.includes("region")) return "region";
+  return null;
+}
 
 const POSITION = { position: "absolute", top: 10, right: 10, zIndex: 5 } as const;
 
@@ -42,6 +55,8 @@ export default function LayerControl() {
   const [smvOpen, setSmvOpen] = useState(false); // SMV section true
   const [boundaryOpen, setBoundaryOpen] = useState(false); // Boundary section
   const [basemap, setBasemapState] = useState<Basemap>("streets");
+
+  const activePage = useGlobalStore((s) => s.activePage);
 
   const map = useMapStore((s) => s.map);
   const smv = useMapStore((s) => s.smv);
@@ -58,6 +73,14 @@ export default function LayerControl() {
     if (!map) return;
     setBasemap(map, basemap);
   }, [map, basemap]);
+
+  // When a boundary page is opened (Region, Province, City / Municipality, Barangay),
+  // select the matching radio. Only runs when the page changes, so the user can still
+  // pick another radio by hand afterwards.
+  useEffect(() => {
+    const type = boundaryTypeFromPage(String(activePage ?? ""));
+    if (type) setBoundary({ type });
+  }, [activePage, setBoundary]);
 
   // true while the map shows the single-color SMV overview (zoom < MIN_ZOOM).
   // Storing a boolean means React only re-renders when the mode actually flips.

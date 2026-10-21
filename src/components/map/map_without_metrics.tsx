@@ -11,6 +11,7 @@ import LayerControl from "./layer_control";
 import MapWalk from "./map_walk";
 
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
+maplibregl.setWorkerCount(4);
 
 const WEBGL_MESSAGE =
   "Your browser doesn't support WebGL, or it is turned off. Turn on hardware acceleration or update your browser/graphics driver.";
@@ -64,6 +65,28 @@ function hideBasemapPois(map: maplibregl.Map) {
   for (const layer of layers) {
     const sourceLayer = (layer as any)["source-layer"];
     if (sourceLayer === "poi" || layer.id.startsWith("poi")) {
+      map.setLayoutProperty(layer.id, "visibility", "none");
+    }
+  }
+}
+
+// Hide the basemap's own administrative boundary lines and their names,
+// so they don't clash with our own boundary layers.
+// To find the exact layer ids of your style, run once:
+//   console.log(map.getStyle().layers.filter((l: any) => l["source-layer"] === "place").map((l) => l.id));
+function hideBasemapBoundaries(map: maplibregl.Map) {
+  const layers = map.getStyle().layers ?? [];
+  for (const layer of layers) {
+    const sourceLayer = (layer as any)["source-layer"];
+
+    // boundary lines (country / state / province / municipality)
+    const isBoundaryLine = sourceLayer === "boundary" || layer.id.startsWith("boundary");
+
+    // their names (country / state / region labels). City, town and village names stay.
+    // To hide every place name, use: sourceLayer === "place"
+    const isAdminLabel = sourceLayer === "place" && /country|state|region|province/i.test(layer.id);
+
+    if (isBoundaryLine || isAdminLabel) {
       map.setLayoutProperty(layer.id, "visibility", "none");
     }
   }
@@ -171,7 +194,10 @@ export default function Map({ active = true }: { active?: boolean }) {
         container: containerRef.current,
         style: MAP_STYLE,
         center: [121, 14.6],
-        zoom: 5,
+        zoom: 6,
+        minZoom:6,
+        //renderWorldCopies: false,
+
         // Normal flat map: default pitch (0), bearing (0) and max pitch (60).
         // Walk mode raises the pitch limit itself while it is active.
         trackResize: false,
@@ -221,6 +247,7 @@ export default function Map({ active = true }: { active?: boolean }) {
     map.on("load", () => {
       removeBrokenShieldLayers(map);
       hideBasemapPois(map);
+      hideBasemapBoundaries(map);
       add3dBuildings(map);
       updateZoom();
       setMap(map);

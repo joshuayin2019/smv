@@ -26,7 +26,13 @@ import { ProvinceHideTab } from '../pages/boundary/province/panel_province';
 
 
 import MunicipalityLayer from '../pages/boundary/city/municipality_layer';
+import MunicipalityPanel from '../pages/boundary/city/panel_munipality';
+import { MunicipalityHideTab } from '../pages/boundary/city/panel_munipality';
+
+
 import BarangayLayer from '../pages/boundary/barangay/barangay_layer';
+import BarangayPanel from '../pages/boundary/barangay/panel_barangay';
+import { BarangayHideTab } from '../pages/boundary/barangay/panel_barangay';
 
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
@@ -110,6 +116,25 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             onHide={hidePanel}
           />
       );
+
+
+      case 'City / Municipality':
+        return (
+          <MunicipalityPanel
+            onNormal={showNormal}
+            onFull={showFull}
+            onHide={hidePanel}
+          />
+      );
+
+      case 'Barangay':
+        return (
+          <BarangayPanel
+            onNormal={showNormal}
+            onFull={showFull}
+            onHide={hidePanel}
+          />
+      );
       
 
       
@@ -130,6 +155,10 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
     } else if(activePage === 'Region'){
       setSizes(SIZES_NORMAL);
     } else if(activePage === 'Province'){
+      setSizes(SIZES_NORMAL);
+    } else if(activePage === 'City / Municipality'){
+      setSizes(SIZES_NORMAL);
+    } else if(activePage === 'Barangay'){
       setSizes(SIZES_NORMAL);
     }
     
@@ -157,12 +186,12 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             <Map active={showMap} />
 
             {/* POI */}
-            {/* <PoiLayer mapPaneRef={mapPaneRef} visible={poiVisible} />
-            <PoiRadius /> */}
+            <PoiLayer mapPaneRef={mapPaneRef} visible={poiVisible} />
+            <PoiRadius />
 
             {/* SMV */}
-            {/* <SmvLayer {...smv} />
-            <SmvRadiusLayer /> */}
+            <SmvLayer {...smv} />
+            <SmvRadiusLayer />
 
             <RegionLayer />
             <ProvinceLayer />
@@ -185,7 +214,8 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
         {activePage === 'Schedule of Market Value' && <SmvHideTab onShow={showNormal} />}
         {activePage === 'Region' && <RegionHideTab onShow={showNormal} />}
         {activePage === 'Province' && <ProvinceHideTab onShow={showNormal} />}
-
+        {activePage === 'City / Municipality' && <MunicipalityHideTab onShow={showNormal} />}
+        {activePage === 'Barangay' && <BarangayHideTab onShow={showNormal} />}
         
         </>
       )}

@@ -1,8 +1,11 @@
-// FILE: src/components/.../municipality_layer.tsx  (new file; render <MunicipalityLayer /> next to <RegionLayer />, no props needed)
-import { useEffect } from "react";
+// FILE: src/components/.../municipality_layer.tsx  (render <MunicipalityLayer /> next to <RegionLayer />, no props needed)
+import { useEffect, useRef } from "react";
 import * as maplibregl from "maplibre-gl";
 import { useMapStore } from "@/stores/map_stores";
+import { useMunicipalityStore } from "@/stores/boundary/municipality_stores";
+import { useGlobalStore } from "@/stores/global_stores"; // <- adjust to your path
 import { basePath } from "@/lib/config";
+import { zoomToMunicipality } from "@/lib/pages/boundary/city/municipality_zoom";
 
 type Expr = maplibregl.ExpressionSpecification;
 
@@ -19,13 +22,16 @@ const MIN_ZOOM = 10;
 const SOURCE_MIN_ZOOM = MIN_ZOOM;
 const SOURCE_MAX_ZOOM = 13; // tiles are reused (overzoomed) above this
 
-// Normal and hover look
+// Normal, hover and selected look
 const FILL_COLOR = "#fdba74";
 const FILL_HOVER_COLOR = "#ea580c";
+const FILL_SELECTED_COLOR = "#f59e0b";
 const LINE_COLOR = "#c2410c";
 const LINE_HOVER_COLOR = "#9a3412";
+const LINE_SELECTED_COLOR = "#b45309";
 const FILL_OPACITY = 0.05;
 const FILL_HOVER_OPACITY = 0.35;
+const FILL_SELECTED_OPACITY = 0.45;
 const LINE_OPACITY = 0.9;
 
 // Hover (color + names) only while zoomed out to this level (zoomed in, the polygon covers the screen)
@@ -37,22 +43,75 @@ const SMV_BOTTOM_ID = "smv-overview";
 const tilesUrl = () =>
   `${window.location.origin}${basePath}/api/pages/boundary/city/tiles/{z}/{x}/{y}`;
 
+// Ask the server for the extent of one municipality (works even if its tiles are not loaded)
+async function fetchMunicipalityExtent(id: number | string): Promise<unknown> {
+  const res = await fetch(`${basePath}/api/pages/boundary/city`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: { id: Number(id) }, mode: "municipalityextent" }),
+  });
+  if (!res.ok) throw new Error(`municipalityextent failed: HTTP ${res.status}`);
+  const json = await res.json();
+  return Array.isArray(json) ? json : json?.message ?? null;
+}
+
 /* ---------------- Expression helpers ---------------- */
 
 // true while the mouse is over this feature (set with setFeatureState)
 const isHover: Expr = ["boolean", ["feature-state", "hover"], false];
+// true while this feature is the selected one (selected wins over hover)
+const isSelected: Expr = ["boolean", ["feature-state", "selected"], false];
 
-const fillColor: Expr = ["case", isHover, FILL_HOVER_COLOR, FILL_COLOR];
-const lineColor: Expr = ["case", isHover, LINE_HOVER_COLOR, LINE_COLOR];
-const fillOpacity = (k: number): Expr => ["case", isHover, FILL_HOVER_OPACITY * k, FILL_OPACITY * k];
+const fillColor: Expr = [
+  "case",
+  isSelected,
+  FILL_SELECTED_COLOR,
+  isHover,
+  FILL_HOVER_COLOR,
+  FILL_COLOR,
+];
+const lineColor: Expr = [
+  "case",
+  isSelected,
+  LINE_SELECTED_COLOR,
+  isHover,
+  LINE_HOVER_COLOR,
+  LINE_COLOR,
+];
+const fillOpacity = (k: number): Expr => [
+  "case",
+  isSelected,
+  FILL_SELECTED_OPACITY * k,
+  isHover,
+  FILL_HOVER_OPACITY * k,
+  FILL_OPACITY * k,
+];
 
 /* ---------------- Component ---------------- */
 
 export default function MunicipalityLayer() {
+  const { activePage } = useGlobalStore();
   const map = useMapStore((s) => s.map);
   const visible = useMapStore((s) => s.boundary.visible && s.boundary.type === "municipality");
   const hoverable = useMapStore((s) => s.boundary.hoverable);
   const opacity = useMapStore((s) => s.boundary.opacity);
+  const selectedId = useMunicipalityStore((s) => s.selectedId);
+  const setSelectedId = useMunicipalityStore((s) => s.setSelectedId);
+  const selectAndZoom = useMunicipalityStore((s) => s.selectAndZoom);
+  const zoomRequest = useMunicipalityStore((s) => s.zoomRequest);
+
+  // tolerant match: "Municipality", "municipality", "boundary/city", "City" ... (adjust to the real value)
+  const page = String(activePage ?? "").toLowerCase();
+  const isMunicipalityPage = page.includes("municipal") || page.includes("city");
+
+  // Last zoom request that was already handled. Starts at the request that exists when this
+  // component mounts, so a remount does not zoom again.
+  const handledZoomN = useRef<number | null>(
+    useMunicipalityStore.getState().zoomRequest?.n ?? null
+  );
+
+  // Extents already fetched from the server, by municipality id (so a second click is instant)
+  const extentCache = useRef<Map<string, unknown>>(new Map());
 
   // 1) Add the source + layers (once per map)
   useEffect(() => {
@@ -185,6 +244,84 @@ export default function MunicipalityLayer() {
       }
     };
   }, [map, hoverable, visible]);
+
+  // 3b) Click a municipality on the map -> select it + zoom to it (only while the Municipality page is active)
+  useEffect(() => {
+    if (!map || !visible || !isMunicipalityPage) return;
+    if (!map.getLayer(FILL_ID)) return;
+
+    const onClick = (e: maplibregl.MapLayerMouseEvent) => {
+      const f = e.features?.[0];
+      if (!f || f.id === undefined || f.id === null) return;
+      selectAndZoom(Number(f.id));
+    };
+
+    // pointer cursor while hovering a municipality (same condition as the click)
+    const canvas = map.getCanvas();
+    const onEnter = () => {
+      canvas.style.cursor = "pointer";
+    };
+    const onLeave = () => {
+      canvas.style.cursor = "";
+    };
+
+    map.on("click", FILL_ID, onClick);
+    map.on("mouseenter", FILL_ID, onEnter);
+    map.on("mouseleave", FILL_ID, onLeave);
+    return () => {
+      map.off("click", FILL_ID, onClick);
+      map.off("mouseenter", FILL_ID, onEnter);
+      map.off("mouseleave", FILL_ID, onLeave);
+      canvas.style.cursor = "";
+    };
+  }, [map, visible, isMunicipalityPage, selectAndZoom]);
+
+  // 3b2) Zoom requests (from the table row click or the map click): one single code path.
+  //      The extent is fetched from the server by id, so it does not depend on loaded tiles.
+  useEffect(() => {
+    if (!zoomRequest) return;
+    if (!map) return; // handledZoomN is not updated, so it runs again once the map is ready
+    if (handledZoomN.current === zoomRequest.n) return; // already handled
+    handledZoomN.current = zoomRequest.n;
+
+    const { id, n } = zoomRequest;
+    const key = String(id);
+
+    const run = async () => {
+      let bbox: unknown = extentCache.current.get(key);
+      if (bbox === undefined) {
+        try {
+          bbox = await fetchMunicipalityExtent(id);
+          if (bbox) extentCache.current.set(key, bbox);
+        } catch (err) {
+          console.warn("[MunicipalityLayer] could not load the extent of municipality", id, err);
+          bbox = undefined; // zoomToMunicipality falls back to the loaded tiles
+        }
+      }
+
+      // A newer click happened while waiting: let that one zoom instead
+      if (useMunicipalityStore.getState().zoomRequest?.n !== n) return;
+
+      zoomToMunicipality(map, id, bbox);
+    };
+
+    void run();
+  }, [map, zoomRequest]);
+
+  // 3c) Reflect selectedId as feature-state "selected" (highlight color)
+  useEffect(() => {
+    if (!map || selectedId === null || !map.getSource(SOURCE_ID)) return;
+    const target = { source: SOURCE_ID, sourceLayer: SOURCE_LAYER, id: selectedId };
+    map.setFeatureState(target, { selected: true });
+    return () => {
+      if (map.getSource(SOURCE_ID)) map.setFeatureState(target, { selected: false });
+    };
+  }, [map, selectedId]);
+
+  // 3d) Clear the selection when leaving the Municipality page
+  useEffect(() => {
+    if (!isMunicipalityPage) setSelectedId(null);
+  }, [isMunicipalityPage, setSelectedId]);
 
   // 4) Remove the layers and source when this component unmounts
   useEffect(() => {

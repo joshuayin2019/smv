@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActionIcon,
   Box,
@@ -19,6 +19,8 @@ import { BORDER, HEADER_BG, HOVER_BG, NAVY, PANEL_BG } from '@/lib/theme_colors'
 const ROW_HEIGHT = 30.5;
 const HEADER_HEIGHT = 31;
 const FOOTER_HEIGHT = 42;
+
+const SELECTED_ROW_BG = '#fef3c7';
 
 // All columns the user can show/hide, with a default width in px (the user can resize them)
 const COLUMN_DEFS: {
@@ -55,6 +57,9 @@ const DEFAULT_SORT: DataTableSortStatus<Province> = { columnAccessor: 'pro_name'
 
 export default function DataTableProvince() {
   const provinces = useProvinceStore((s) => s.province);
+  const selectedId = useProvinceStore((s) => s.selectedId);
+  const selectAndZoom = useProvinceStore((s) => s.selectAndZoom);
+  const zoomRequest = useProvinceStore((s) => s.zoomRequest);
 
   // ----- UI state ------------------------------------------------------------
   const [search, setSearch] = useState('');
@@ -137,15 +142,62 @@ export default function DataTableProvince() {
   const [offset, setOffset] = useState(0);
   const page = Math.floor(offset / pageSize) + 1;
 
-  // Back to the start whenever the result set changes
+  // pendingReveal: "jump to the page of the selected row" is waiting to be done.
+  // Set on every new selection / zoom request (map click or row click).
+  const pendingReveal = useRef(false);
+
+  // Back to the start whenever the result set changes (but not while a reveal is pending,
+  // otherwise it would undo the jump, e.g. right after the search box was cleared)
   useEffect(() => {
+    if (pendingReveal.current) return;
     setOffset(0);
   }, [debouncedSearch, provinces, filters]);
+
+  // ----- Selection: jump to the page that contains the selected row ----------
+  // Triggered by selectedId AND by each new zoomRequest, so clicking the same province on the
+  // map again (after paging away in the table) also brings the table back to it.
+  useEffect(() => {
+    if (selectedId !== null) pendingReveal.current = true;
+  }, [selectedId, zoomRequest]);
+
+  useEffect(() => {
+    if (!pendingReveal.current || selectedId === null || !debouncedHeight) return;
+    const idx = sortedRows.findIndex((r) => String(r.id) === String(selectedId));
+    if (idx >= 0) {
+      pendingReveal.current = false;
+      setOffset(Math.floor(idx / pageSize) * pageSize);
+      return;
+    }
+
+    const hasFilters = FILTER_KEYS.some((k) => filters[k].length > 0);
+    if (search || debouncedSearch || hasFilters) {
+      // Selected row is hidden by the search or a column filter -> clear them and WAIT: this
+      // effect runs again when they are empty and sortedRows is the full list.
+      if (search) setSearch('');
+      if (hasFilters) setFilters(EMPTY_FILTERS);
+    } else {
+      pendingReveal.current = false; // not in the data at all
+    }
+  }, [
+    selectedId,
+    zoomRequest,
+    sortedRows,
+    pageSize,
+    debouncedHeight,
+    search,
+    debouncedSearch,
+    filters,
+  ]);
 
   const records = useMemo(() => {
     const from = (page - 1) * pageSize;
     return sortedRows.slice(from, from + pageSize);
   }, [sortedRows, page, pageSize]);
+
+  // ----- Row click: select + zoom to extent ----------------------------------
+  const handleRowClick = (record: Province) => {
+    selectAndZoom(Number(record.id)); // the map layer does the zooming
+  };
 
   // ----- Columns -------------------------------------------------------------
   const columns: DataTableColumn<Province>[] = useMemo(
@@ -277,6 +329,14 @@ export default function DataTableProvince() {
             recordsPerPage={pageSize}
             page={page}
             onPageChange={(p) => setOffset((p - 1) * pageSize)}
+            onRowClick={({ record }) => handleRowClick(record)}
+            rowStyle={(record) => ({
+              cursor: 'pointer',
+              backgroundColor:
+                selectedId !== null && String(record.id) === String(selectedId)
+                  ? SELECTED_ROW_BG
+                  : undefined,
+            })}
             noRecordsText="No provinces found"
           />
         </Box>
