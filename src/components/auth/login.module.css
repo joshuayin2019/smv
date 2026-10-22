@@ -1,46 +1,377 @@
-.background {
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+.page {
+  --survey-ink: #0f2a3d;
+  --survey-teal: #1f7a8c;
+  --survey-line: #5f8fa3;
+  --survey-paper: #f4f7f8;
+  --survey-flag: #f2a73b;
+
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  /* Own scroll container, since the global CSS disables page scrolling. */
   height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-family: 'IBM Plex Sans', var(--mantine-font-family);
+  color: var(--survey-ink);
+}
+
+/* ---------- Map panel ---------- */
+.mapPanel {
+  position: relative;
+  overflow: hidden;
+  background: var(--survey-ink);
+  display: flex;
+  align-items: flex-end;
+  padding: 56px;
+}
+
+.map {
+  position: absolute;
+  inset: 0;
   width: 100%;
+  height: 100%;
 }
 
-.paper {
-  background-color: transparent;
-  border-color: aliceblue;
+/* Parcels: outlines trace in, hold, and fade, on a continuous loop. */
+.parcel,
+.parcelHot {
+  fill: transparent;
+  stroke: var(--survey-line);
+  stroke-width: 1.5;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  /* Always running: draw in, hold, fade out, repeat. */
+  animation: cycle 9s ease-in-out infinite backwards;
 }
 
-
-/* Input */
-.field {
-  color: aliceblue;
-  font-style: italic;
+.layerGroup {
+  transition: opacity 250ms ease;
 }
 
-.field input{
-  background-color: transparent;
-  border-color: aliceblue;
-  color: white; /* Optional */
-  font-style: normal;
+/* The selected parcel: same loop, with an amber fill that breathes. */
+.parcelHot {
+  stroke: var(--survey-flag);
+  stroke-width: 2.5;
+  animation: cycle 9s ease-in-out infinite backwards, glow 2.4s ease-in-out infinite alternate backwards;
 }
 
+/* Market value: line geometry. Color and thickness grow with the value band. */
+.road {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: cycle 9s ease-in-out infinite backwards;
+}
+
+.road1 { stroke: rgba(159, 211, 224, 0.55); stroke-width: 2; }
+.road2 { stroke: #7cc8da; stroke-width: 3; }
+.road3 { stroke: #3fb3cc; stroke-width: 4.5; }
+.road4 { stroke: #19d3f0; stroke-width: 6; }
+
+/* Administrative boundary: dashed, heavier than parcel lines. */
+.boundary {
+  fill: none;
+  stroke: #d7e6ec;
+  stroke-width: 2;
+  stroke-dasharray: 12 6 3 6;
+  opacity: 0.8;
+  transition: opacity 250ms ease;
+  animation: march 3s linear infinite;
+}
+
+/* Points of interest. */
+.poi {
+  fill: #fff;
+  stroke: var(--survey-ink);
+  stroke-width: 2;
+}
+
+.poiGroup {
+  transition: opacity 250ms ease;
+}
+
+/* Ripple ring behind each point of interest. */
+.poiPulse {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.5;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pulse 3s ease-out infinite;
+}
+
+.scan {
+  fill: url(#scanGrad);
+  pointer-events: none;
+  animation: scan 7s linear infinite;
+}
+
+.dim {
+  opacity: 0.12;
+}
+
+@keyframes cycle {
+  0% { stroke-dashoffset: 1; opacity: 0; }
+  10% { opacity: 1; }
+  40% { stroke-dashoffset: 0; }
+  85% { stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+@keyframes glow {
+  from { fill: rgba(242, 167, 59, 0.12); }
+  to { fill: rgba(242, 167, 59, 0.48); }
+}
+
+@keyframes scan {
+  from { transform: translateY(-60px); }
+  to { transform: translateY(740px); }
+}
+
+@keyframes march {
+  to { stroke-dashoffset: -27; }
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 0.7; }
+  70%, 100% { transform: scale(3.4); opacity: 0; }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+.mapCopy {
+  position: relative;
+  z-index: 1;
+  max-width: 460px;
+  padding: 24px 28px;
+  background: rgba(15, 42, 61, 0.9);
+  border-left: 4px solid var(--survey-flag);
+}
+
+.brand {
+  font-weight: 600;
+  font-size: 15px;
+  color: #bcd6df;
+}
+
+.mapTitle {
+  margin-top: 6px;
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 600;
+  font-size: 26px;
+  line-height: 1.25;
+  color: #fff;
+}
+
+/* Legend: each swatch matches its layer on the map. */
+.legend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 20px;
+  margin: 20px 0 0;
+  padding: 16px 0 0;
+  list-style: none;
+  border-top: 1px solid rgba(188, 214, 223, 0.25);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 0;
+  font: inherit;
+  font-size: 13px;
+  color: #d7e6ec;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.legendItem:hover,
+.legendItem:focus-visible {
+  color: #fff;
+}
+
+.legendItem:focus-visible {
+  outline: 2px solid var(--survey-flag);
+  outline-offset: 2px;
+}
+
+.swatch {
+  flex: none;
+  width: 22px;
+  height: 14px;
+  box-sizing: border-box;
+}
+
+.sw_parcels {
+  border: 1.5px solid var(--survey-line);
+}
+
+/* Market value is a line, so its swatch is a line that thickens left to right. */
+.sw_value {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, rgba(159, 211, 224, 0.55), #19d3f0);
+  clip-path: polygon(0 40%, 100% 0, 100% 100%, 0 60%);
+}
+
+.sw_boundary {
+  height: 0;
+  border-top: 2px dashed #d7e6ec;
+}
+
+.sw_poi {
+  width: 10px;
+  height: 10px;
+  margin: 0 6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.25);
+}
+
+/* ---------- Form panel ---------- */
+.formPanel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  background: var(--survey-paper);
+}
+
+.form {
+  width: 100%;
+  max-width: 400px;
+  animation: rise 600ms ease-out 200ms both;
+}
 
 .title {
-  font-family: Outfit, var(--mantine-font-family);
+  font-family: 'Fraunces', Georgia, serif;
   font-weight: 700;
-  color: aliceblue;
-  font-size: 32px;
+  font-size: 36px;
+  color: var(--survey-ink);
 }
 
 .subtitle {
-  color: var(--mantine-color-dimmed);
-  font-size: var(--mantine-font-size-sm);
-  text-align: center;
-  margin-top: 5px;
+  margin-top: 8px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #4a6272;
 }
 
-.copyright {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
-  color: white;
-  font-size: 8px;
+.label {
+  margin-bottom: 6px;
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--survey-ink);
+}
+
+.input,
+.innerInput {
+  background: #fff;
+  border-color: #b9c9d1;
+  color: var(--survey-ink);
+}
+
+.input:focus,
+.input:focus-within {
+  border-color: var(--survey-teal);
+  outline: 2px solid rgba(31, 122, 140, 0.25);
+  outline-offset: 0;
+}
+
+.checkLabel {
+  color: #4a6272;
+}
+
+.link {
+  color: var(--survey-teal);
+  font-weight: 500;
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--survey-teal);
+  outline-offset: 2px;
+}
+
+.submit {
+  --button-bg: var(--survey-ink);
+  --button-hover: #1b4560;
+  font-weight: 600;
+  transition: transform 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+
+.submit:hover:not([data-loading]) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(15, 42, 61, 0.28);
+}
+
+.submit:focus-visible {
+  outline: 3px solid var(--survey-flag);
+  outline-offset: 2px;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 900px) {
+  .page {
+    grid-template-columns: 1fr;
+  }
+
+  /* Compact banner so the form is visible without scrolling. */
+  .mapPanel {
+    min-height: 150px;
+    padding: 16px;
+  }
+
+  .mapCopy {
+    padding: 12px 16px;
+  }
+
+  .mapTitle {
+    font-size: 17px;
+  }
+
+  .legend {
+    display: none;
+  }
+
+  .formPanel {
+    align-items: flex-start;
+    padding-top: 28px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boundary,
+  .poiPulse,
+  .form {
+    animation: none;
+  }
+
+  .scan {
+    display: none;
+  }
+
+  .parcel,
+  .parcelHot,
+  .road {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+
+  .parcelHot {
+    fill: rgba(242, 167, 59, 0.3);
+  }
 }

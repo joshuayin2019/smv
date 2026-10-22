@@ -9,6 +9,7 @@ import PoiPanel from '../pages/poi/panel_poi';
 import { PoiHideTab } from '../pages/poi/panel_poi';
 import PoiRadius from '../pages/poi/radius_poi';
 
+
 // SMV
 import SmvLayer from '../pages/smv/map_smv';
 import SmvPanel from '../pages/smv/panel_smv';
@@ -33,6 +34,8 @@ import { MunicipalityHideTab } from '../pages/boundary/city/panel_munipality';
 import BarangayLayer from '../pages/boundary/barangay/barangay_layer';
 import BarangayPanel from '../pages/boundary/barangay/panel_barangay';
 import { BarangayHideTab } from '../pages/boundary/barangay/panel_barangay';
+
+import PopulationLayer from '../pages/demographic/population/map_population';
 
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
@@ -99,6 +102,7 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
       );
 
 
+
       case 'Region':
         return (
           <RegionPanel
@@ -152,6 +156,8 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
       setSizes(SIZES_NORMAL);
     } else if(activePage === 'Schedule of Market Value'){
       setSizes(SIZES_NORMAL);
+    } else if(activePage === 'Population'){
+      setSizes(SIZES_HIDDEN);
     } else if(activePage === 'Region'){
       setSizes(SIZES_NORMAL);
     } else if(activePage === 'Province'){
@@ -188,15 +194,19 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             {/* POI */}
             <PoiLayer mapPaneRef={mapPaneRef} visible={poiVisible} />
             <PoiRadius />
+            <PopulationLayer />
 
             {/* SMV */}
             <SmvLayer {...smv} />
             <SmvRadiusLayer />
 
+
             <RegionLayer />
             <ProvinceLayer />
             <MunicipalityLayer />
             <BarangayLayer />
+
+    
 
           </Box>
         </Splitter.Pane>
@@ -207,11 +217,12 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
         </Splitter.Pane>
       </Splitter>
 
-      {/* Show the tab only on Point of Interest, and only while the panel is hidden */}
+      {/* Show the tab only while the panel is hidden */}
       {!isOpen && (
         <>
         {activePage === 'Point of Interest' && <PoiHideTab onShow={showNormal} />}
         {activePage === 'Schedule of Market Value' && <SmvHideTab onShow={showNormal} />}
+
         {activePage === 'Region' && <RegionHideTab onShow={showNormal} />}
         {activePage === 'Province' && <ProvinceHideTab onShow={showNormal} />}
         {activePage === 'City / Municipality' && <MunicipalityHideTab onShow={showNormal} />}

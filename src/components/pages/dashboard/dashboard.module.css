@@ -1,0 +1,7 @@
+.row {
+  transition: background-color 120ms ease;
+}
+
+.row:hover {
+  background-color: var(--hover-bg);
+}

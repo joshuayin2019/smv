@@ -1,9 +1,11 @@
 import dynamic from 'next/dynamic';
+import { useEffect } from 'react';
 import { Box, Tabs, Loader } from '@mantine/core';
 import { useGlobalStore, DEFAULT_PAGE } from '@/stores/global_stores';
 
 import PanelBottomManagement from './panel_bottom_management';
-import { useEffect } from 'react';
+import DashboardMain from '../pages/dashboard/dashboard_main';
+
 
 const UserManagementMain = dynamic(
   () => import('@/components/pages/user_management/user_management_main'),
@@ -37,7 +39,9 @@ export default function LayoutMain(_props: { navbarOpened?: boolean }) {
             value={activePage}
             onChange={(value) => value && setActivePage(value)}
           >
-            <Tabs.Panel value="Dashboard">First panel</Tabs.Panel>
+            <Tabs.Panel value="Dashboard">
+              <DashboardMain />
+            </Tabs.Panel>
 
             {isAdmin && (
               <Tabs.Panel value="User Management">
