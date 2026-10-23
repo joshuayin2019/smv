@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Alert, Badge, Box, Button, Group, Loader, Paper, Progress, SegmentedControl, SimpleGrid, Skeleton, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import dynamic from 'next/dynamic';
+import { Alert, Badge, Box, Button, Grid, Group, Loader, Paper, Progress, SegmentedControl, SimpleGrid, Skeleton, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { DonutChart } from '@mantine/charts';
 import { IconArrowUpRight, IconBuildingCommunity, IconMapPin, IconRefresh, IconRoute, IconUsers } from '@tabler/icons-react';
 import { useGlobalStore } from '@/stores/global_stores';
@@ -11,6 +12,7 @@ const full = (n: number) => n.toLocaleString('en-PH');
 const compact = (n: number) => new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
 const peso = (n: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 0 }).format(n);
 const PARCEL_TOTAL = SAMPLE_PARCELS.reduce((sum, item) => sum + item.value, 0);
+const DashboardMap = dynamic(() => import('./dashboard_map'), { ssr: false, loading: () => <Skeleton h={425} radius="md" /> });
 
 function Card({ title, eyebrow, action, children }: { title: string; eyebrow?: string; action?: ReactNode; children: ReactNode }) {
   return <Paper withBorder radius="lg" p="lg" h="100%" style={{ borderColor: BORDER, background: '#fff' }}>
@@ -21,8 +23,8 @@ function Card({ title, eyebrow, action, children }: { title: string; eyebrow?: s
   </Paper>;
 }
 
-function Ranking({ data, currency = false }: { data: DashboardItem[]; currency?: boolean }) {
-  const max = Math.max(...data.map(item => item.value), 1);
+function Ranking({ data, currency = false, maxValue = 0 }: { data: DashboardItem[]; currency?: boolean; maxValue?: number }) {
+  const max = Math.max(maxValue, ...data.map(item => item.value), 1);
   if (!data.length) return <Text size="sm" c="dimmed" py="xl">No records in your assigned scope.</Text>;
   return <Stack gap="md">{data.map((item, index) => <div key={item.name}>
     <Group justify="space-between" gap="xs" mb={6} wrap="nowrap"><Text size="xs" c="#45536e" style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{item.name}</Text>
@@ -106,17 +108,37 @@ export default function DashboardMain() {
         </Paper>)}
       </SimpleGrid>
 
-      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg">
+      <Grid gap="lg">
+        <Grid.Col span={{ base: 12, lg: 8 }}>
+          <Card eyebrow="Geographic context" title="Explore your assigned area" action={link('Population')}>
+            <DashboardMap />
+          </Card>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, lg: 4 }}>
+          <Card eyebrow="Places & coverage" title="Top areas by POI" action={link('Point of Interest')}>
+            {data?.poi ? <Ranking data={data.poi.areas} /> : loading ? <Skeleton h={260} /> : unavailable}
+            <Paper mt="xl" p="md" radius="md" bg="#f4f6fb"><Text size="xs" fw={700} c={NAVY_DEEP}>Different datasets, different scopes</Text>
+              <Text size="xs" c="dimmed" mt={5}>The map uses your demographic scope. This ranking uses your POI scope.</Text></Paper>
+          </Card>
+        </Grid.Col>
+      </Grid>
+
+      <Grid gap="lg">
+        <Grid.Col span={{ base: 12, lg: 7 }}>
         <Card eyebrow="Valuation" title="Average market values" action={link('Schedule of Market Value')}>
           {data?.market ? <><Ranking data={data.market.averages} currency /><Text fz={10} c="dimmed" mt="lg">Unweighted average per road record, using stored zonal values. Zero values are excluded; units follow the source inventory.</Text>
             <Group gap={6} mt="sm">{data.market.years.slice(0, 5).map(year => <Badge key={year.name} variant="light" color="gray" size="sm">{year.name} · {full(year.value)} records</Badge>)}</Group></> : loading ? <Skeleton h={205} /> : unavailable}
         </Card>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, lg: 5 }}>
         <Card eyebrow="Places" title="Top points of interest categories" action={link('Point of Interest')}>
           {data?.poi ? <><Ranking data={data.poi.categories} /><Text fz={10} c="dimmed" mt="lg">Top six categories by number of mapped places.</Text></> : loading ? <Skeleton h={205} /> : unavailable}
         </Card>
-      </SimpleGrid>
+        </Grid.Col>
+      </Grid>
 
-      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg">
+      <Grid gap="lg">
+        <Grid.Col span={{ base: 12, lg: 5 }}>
         <Card eyebrow="Communities · PSA 2020" title="Population & barangay class" action={link('Population')}>
           {demographic ? <Stack gap="lg">
             <Group justify="space-between"><Text size="xs" c="dimmed">{full(demographic.municipalities)} municipalities</Text><Text size="xs" c="dimmed">{full(demographic.barangays)} barangays</Text></Group>
@@ -127,24 +149,32 @@ export default function DashboardMain() {
             <Ranking data={demographic.classes} /><Button size="compact-xs" variant="subtle" color={NAVY} onClick={() => setPage('Barangay Class')}>Explore barangay classifications →</Button>
           </Stack> : loading ? <Skeleton h={250} /> : unavailable}
         </Card>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, lg: 7 }}>
         <Card eyebrow="Land inventory" title="Parcels by classification" action={<Badge color="orange" variant="light" size="sm">Sample data</Badge>}>
           <Distribution data={SAMPLE_PARCELS} totalLabel="sample parcels" />
           <Text fz={11} c="#8c6c2c" mt="lg">Illustrative figures only. Parcel records are not connected yet; these numbers do not reflect your geographic scope.</Text>
         </Card>
-      </SimpleGrid>
+        </Grid.Col>
+      </Grid>
 
-      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg">
+      <Grid gap="lg">
+        <Grid.Col span={{ base: 12, lg: 8 }}>
         <Card eyebrow="Buildings · PSA 2020" title="Building profile" action={link(demographicPage)}>
           <SegmentedControl size="xs" mb="lg" value={demographicView} onChange={setDemographicView} data={[{ value: 'buildings', label: 'Building type' }, { value: 'years', label: 'Year built' }, { value: 'floors', label: 'Floors' }]} />
-          {demographic ? <Ranking data={demographics ?? []} /> : loading ? <Skeleton h={250} /> : unavailable}
+          {demographic ? <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xl"><Ranking maxValue={Math.max(...(demographics ?? []).map(item => item.value), 1)} data={(demographics ?? []).slice(0, Math.ceil((demographics?.length ?? 0) / 2))} /><Ranking maxValue={Math.max(...(demographics ?? []).map(item => item.value), 1)} data={(demographics ?? []).slice(Math.ceil((demographics?.length ?? 0) / 2))} /></SimpleGrid> : loading ? <Skeleton h={250} /> : unavailable}
           <Text fz={10} c="dimmed" mt="lg">Counts from the supplied PSA fields. Year-built categories include only the listed ranges; omitted years are not inferred.</Text>
         </Card>
-        <Card eyebrow="Geographic coverage" title="Top areas by points of interest" action={link('Point of Interest')}>
-          {data?.poi ? <Ranking data={data.poi.areas} /> : loading ? <Skeleton h={250} /> : unavailable}
-          <Paper mt="xl" p="md" radius="md" bg="#f4f6fb"><Text size="xs" fw={700} c={NAVY_DEEP}>Read the data in context</Text>
-            <Text size="xs" c="dimmed" mt={5}>SMV, POI and demographic scopes can differ. Building and population figures are based on PSA 2020, while market-value coverage follows the recorded SMV years.</Text></Paper>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, lg: 4 }}>
+        <Card eyebrow="Keep exploring" title="Open a demographic view">
+          <Stack gap="xs">
+            {['Population', 'Barangay Class', 'Type of Buildings', 'Year Built of Buildings', 'Number of Story of Building'].map(page => <Button key={page} variant="light" color={NAVY} justify="space-between" rightSection={<IconArrowUpRight size={15} />} onClick={() => setPage(page)}>{page}</Button>)}
+            <Text fz={10} c="dimmed" mt="xs">PSA figures use the 2020 census. Parcel figures are sample data.</Text>
+          </Stack>
         </Card>
-      </SimpleGrid>
+        </Grid.Col>
+      </Grid>
       <Text ta="center" fz={10} c="dimmed" pb="sm">Database summaries are cached for up to one minute. Parcel figures are illustrative.</Text>
     </Stack>
   </Box>;

@@ -44,7 +44,6 @@ import BarangayPanel from '../pages/boundary/barangay/panel_barangay';
 import { BarangayHideTab } from '../pages/boundary/barangay/panel_barangay';
 
 import PopulationLayer from '../pages/demographic/population/map_population';
-import PopulationModeTemp from '../pages/demographic/population/population_mode_temp';
 import DemographicPopulationPanel from '../pages/demographic/population/panel_population';
 import { DemographicPopulationHideTab } from '../pages/demographic/population/panel_population';
 
@@ -236,7 +235,6 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             <BuildingTypeLayer />
             <BuildingStoryLayer />
             <BarangayClassLayer />
-            {/* <PopulationModeTemp /> */}
 
             {/* SMV */}
             <SmvLayer {...smv} />
