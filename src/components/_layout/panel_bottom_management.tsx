@@ -36,6 +36,7 @@ import BarangayPanel from '../pages/boundary/barangay/panel_barangay';
 import { BarangayHideTab } from '../pages/boundary/barangay/panel_barangay';
 
 import PopulationLayer from '../pages/demographic/population/map_population';
+import PopulationModeTemp from '../pages/demographic/population/population_mode_temp';
 
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
@@ -194,7 +195,9 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             {/* POI */}
             <PoiLayer mapPaneRef={mapPaneRef} visible={poiVisible} />
             <PoiRadius />
+
             <PopulationLayer />
+            <PopulationModeTemp />
 
             {/* SMV */}
             <SmvLayer {...smv} />

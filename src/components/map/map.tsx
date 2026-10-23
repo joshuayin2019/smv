@@ -20,7 +20,7 @@ import MapWalk from "./map_walk";
 // MapLibre worker configuration
 // ------------------------------------------------------------
 
-const WORKER_COUNT = 4;
+const WORKER_COUNT = 8;
 
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
 maplibregl.setWorkerCount(WORKER_COUNT);
