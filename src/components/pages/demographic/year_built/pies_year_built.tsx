@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import { useMapStore } from '@/stores/map_stores';
 import { useGlobalStore } from '@/stores/global_stores';
@@ -8,6 +8,7 @@ import { YEAR_BUILT_CATEGORIES, pieSlicePath, type YearBuiltChart } from '@/lib/
 
 const MIN_ZOOM = { region: 3, province: 5, municipality: 7, barangay: 11 };
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const chartDimensions = new WeakMap<HTMLElement, { width: number; height: number }>();
 
 function arrangeCharts(map: maplibregl.Map, markers: Map<string, maplibregl.Marker>, minZoom: number) {
   const selected = useYearBuiltStore.getState().selectedYearBuilt?.code;
@@ -15,18 +16,30 @@ function arrangeCharts(map: maplibregl.Map, markers: Map<string, maplibregl.Mark
   // The response is ordered by building count. Always place the selection first.
   const ordered = [...markers].sort(([a], [b]) => Number(b === selected) - Number(a === selected));
   const canvas = map.getCanvas();
-  for (const [, marker] of ordered) {
+  const viewportWidth = canvas.clientWidth;
+  const viewportHeight = canvas.clientHeight;
+  // Batch layout reads before any style writes; cache dimensions for unchanged markers.
+  const measured = ordered.map(([, marker]) => {
     const element = marker.getElement();
     const point = map.project(marker.getLngLat());
-    const width = element.offsetWidth + 8;
-    const height = element.offsetHeight + 8;
+    let size = chartDimensions.get(element);
+    if (!size) {
+      size = { width: element.offsetWidth + 8, height: element.offsetHeight + 8 };
+      chartDimensions.set(element, size);
+    }
+    return { element, point, ...size };
+  });
+  for (const { element, point, width, height } of measured) {
     const box = { left: point.x - width / 2, right: point.x + width / 2,
       top: point.y - height / 2, bottom: point.y + height / 2 };
-    const hidden = map.getZoom() < minZoom || box.right < 0 || box.left > canvas.clientWidth ||
-      box.bottom < 0 || box.top > canvas.clientHeight || occupied.some(other =>
+    const hidden = map.getZoom() < minZoom || box.right < 0 || box.left > viewportWidth ||
+      box.bottom < 0 || box.top > viewportHeight || occupied.some(other =>
         box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top);
-    element.style.visibility = hidden ? 'hidden' : 'visible';
-    element.style.pointerEvents = hidden ? 'none' : 'auto';
+    const visibility = hidden ? 'hidden' : 'visible';
+    if (element.style.visibility !== visibility) {
+      element.style.visibility = visibility;
+      element.style.pointerEvents = hidden ? 'none' : 'auto';
+    }
     if (!hidden) occupied.push(box);
   }
 }
@@ -43,11 +56,9 @@ function chartElement(item: YearBuiltChart, select: () => void) {
   svg.setAttribute('width', '44');
   svg.setAttribute('height', '44');
   let start = -Math.PI / 2;
-  const details = [item.name];
   for (const category of YEAR_BUILT_CATEGORIES) {
     const value = Math.max(0, Number(item.values[category.field]) || 0);
     const fraction = item.year_built > 0 ? value / item.year_built : 0;
-    details.push(`${category.label}: ${value.toLocaleString()} (${(fraction * 100).toFixed(1)}%)`);
     if (value === 0) continue;
     const slice = document.createElementNS(SVG_NS, 'path');
     slice.setAttribute('d', pieSlicePath(start, fraction));
@@ -57,7 +68,6 @@ function chartElement(item: YearBuiltChart, select: () => void) {
     svg.appendChild(slice);
     start += fraction * Math.PI * 2;
   }
-  button.title = [...details, 'Unknown: not reported in the supplied data'].join('\n');
   button.appendChild(svg);
   button.addEventListener('click', (event) => { event.stopPropagation(); select(); });
   const label = document.createElement('div');
@@ -113,7 +123,8 @@ export default function YearBuiltPies({ visible = true, opacity = 1 }: { visible
   const mode = useYearBuiltStore(s => s.year_builtMode);
   const selectedCode = useYearBuiltStore(s => s.selectedYearBuilt?.code);
   const markers = useRef(new Map<string, maplibregl.Marker>());
-  const [status, setStatus] = useState('');
+  const setStatus = useYearBuiltStore(s => s.setChartStatus);
+  const boundaryHoverEnabled = useYearBuiltStore(s => s.boundaryHoverEnabled);
   const show = visible && activePage === 'Year Built of Buildings';
 
   useEffect(() => {
@@ -125,6 +136,7 @@ export default function YearBuiltPies({ visible = true, opacity = 1 }: { visible
     let request: AbortController | undefined;
     let timer: ReturnType<typeof setTimeout>;
     let location: maplibregl.LngLat;
+    let lastHoverAt = 0;
     const hide = () => {
       code = undefined;
       clearTimeout(timer);
@@ -137,8 +149,13 @@ export default function YearBuiltPies({ visible = true, opacity = 1 }: { visible
       popup.getElement().style.pointerEvents = 'none';
     };
     const hover = (event: MouseEvent) => {
+      if (!boundaryHoverEnabled || map.isMoving()) { hide(); return; }
+      const now = performance.now();
+      if (now - lastHoverAt < 80) return;
+      lastHoverAt = now;
       const target = event.target as HTMLElement;
       const marker = target.closest<HTMLElement>('[data-year-built-code]');
+      if (!boundaryHoverEnabled) { hide(); return; }
       if (!marker && target !== map.getCanvas()) { hide(); return; }
       const rect = map.getCanvas().getBoundingClientRect();
       const point: [number, number] = [event.clientX - rect.left, event.clientY - rect.top];
@@ -180,7 +197,7 @@ export default function YearBuiltPies({ visible = true, opacity = 1 }: { visible
       container.removeEventListener('mouseleave', hide);
       map.off('movestart', hide);
     };
-  }, [map, show, mode, scopeKey]);
+  }, [map, show, mode, scopeKey, boundaryHoverEnabled]);
 
   useEffect(() => {
     if (!map || !show || !scope?.length) return;
@@ -210,12 +227,20 @@ export default function YearBuiltPies({ visible = true, opacity = 1 }: { visible
           if (!response.ok) throw new Error('Could not load charts');
           const data = await response.json() as { items: YearBuiltChart[]; truncated: boolean };
           if (disposed || request.signal.aborted) return;
-          clear();
+          const nextCodes = new Set(data.items.map(item => item.code));
+          markers.current.forEach((marker, code) => {
+            if (!nextCodes.has(code)) { marker.remove(); markers.current.delete(code); }
+          });
           for (const item of data.items) {
+            const signature = JSON.stringify(item);
+            const existing = markers.current.get(item.code);
+            if (existing?.getElement().dataset.signature === signature) continue;
+            existing?.remove();
             const element = chartElement(item, () => useYearBuiltStore.getState().setSelectedYearBuilt({
               code: item.code, name: item.name, year_built: item.year_built, level: mode,
             }));
             const selected = useYearBuiltStore.getState().selectedYearBuilt?.code;
+            element.dataset.signature = signature;
             element.style.opacity = String(selected && selected !== item.code ? opacity * 0.45 : opacity);
             element.querySelector('button')!.style.outline = selected === item.code ? '2px solid #ff2d55' : '';
             markers.current.set(item.code, new maplibregl.Marker({ element, anchor: 'center' }).setLngLat(item.coordinates).addTo(map));
@@ -238,25 +263,32 @@ export default function YearBuiltPies({ visible = true, opacity = 1 }: { visible
       ctrl?.abort();
       map.off('moveend', update);
       clear();
+      setStatus('');
     };
   }, [map, show, mode, scopeKey, opacity]);
 
   useEffect(() => {
     if (!map || !show) return;
     let frame = 0;
+    let lastArrangeAt = 0;
     const arrange = () => {
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
+        const now = performance.now();
+        if (map.isMoving() && now - lastArrangeAt < 100) return;
+        lastArrangeAt = now;
         arrangeCharts(map, markers.current, MIN_ZOOM[mode]);
       });
     };
     arrange();
     map.on('move', arrange);
+    map.on('moveend', arrange);
     map.on('resize', arrange);
     return () => {
       cancelAnimationFrame(frame);
       map.off('move', arrange);
+      map.off('moveend', arrange);
       map.off('resize', arrange);
     };
   }, [map, show, mode, selectedCode]);
@@ -269,19 +301,5 @@ export default function YearBuiltPies({ visible = true, opacity = 1 }: { visible
     });
   }, [selectedCode, opacity]);
 
-  if (!show) return null;
-  return (
-    <div style={{ position: 'absolute', bottom: 24, left: 12, zIndex: 5, background: '#fffffff2', padding: '10px 12px', borderRadius: 4, boxShadow: '0 1px 5px #0003', fontSize: 11, maxWidth: 240, maxHeight: '80%', overflow: 'auto' }}>
-      <strong>Buildings: Year Built</strong>
-      {YEAR_BUILT_CATEGORIES.map(category => (
-        <div key={category.field} style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 3 }}>
-          <span style={{ background: category.color, width: 12, height: 12, display: 'inline-block' }} />{category.label}
-        </div>
-      ))}
-      <div style={{ marginTop: 5 }}>Unknown: not reported</div>
-      <div style={{ marginTop: 5, color: '#596579' }}>Slices show shares of reported years.</div>
-      <div style={{ marginTop: 5, color: '#596579' }}>Overlapping charts are hidden. Zoom in to reveal them.</div>
-      {status && <div role="status" style={{ marginTop: 5 }}>{status}</div>}
-    </div>
-  );
+  return null;
 }

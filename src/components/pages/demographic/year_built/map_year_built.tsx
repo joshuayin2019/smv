@@ -354,14 +354,12 @@ export default function YearBuiltLayer({ visible = true, opacity = 1 }: Props) {
     const order = [FILL_ID, LINE_ID, SEL_FILL_ID, SEL_LINE_ID, LABEL_ID]; // bottom -> top
 
     const place = () => {
-      const style = map.getStyle();
-      if (!style) return;
-      const ids = style.layers.map((l) => l.id);
+      if (!map.getLayer(FILL_ID)) return;
+      const ids = map.getLayersOrder();
       const topId = [...order].reverse().find((id) => ids.includes(id));
       if (!topId) return; // year_built layers not added yet
 
-      const above = style.layers.find((l) => l.id.startsWith("smv-") || l.id.startsWith("poi-"));
-      const before = above?.id;
+      const before = ids.find((id) => id.startsWith("smv-") || id.startsWith("poi-"));
 
       // already in place -> stop, so moveLayer doesn't re-trigger the events forever
       const top = ids.indexOf(topId);

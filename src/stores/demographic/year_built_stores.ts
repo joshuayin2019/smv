@@ -10,6 +10,10 @@ export type YearBuiltRecord = {
 };
 
 type YearBuiltState = {
+  boundaryHoverEnabled: boolean;
+  setBoundaryHoverEnabled: (enabled: boolean) => void;
+  chartStatus: string;
+  setChartStatus: (status: string) => void;
   year_builtMode: YearBuiltMode;
   setYearBuiltMode: (m: YearBuiltMode) => void;
 
@@ -22,6 +26,10 @@ type YearBuiltState = {
 };
 
 export const useYearBuiltStore = create<YearBuiltState>((set) => ({
+  boundaryHoverEnabled: true,
+  setBoundaryHoverEnabled: (boundaryHoverEnabled) => set({ boundaryHoverEnabled }),
+  chartStatus: '',
+  setChartStatus: (chartStatus) => set({ chartStatus }),
   year_builtMode: "municipality",
   setYearBuiltMode: (year_builtMode) => set({ year_builtMode }),
 

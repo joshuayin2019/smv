@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Box, Group, LoadingOverlay, Select, Stack, Text } from '@mantine/core';
+import { Box, Group, LoadingOverlay, Select, Stack, Tabs, Text } from '@mantine/core';
+import LegendYearBuilt from './legend_year_built';
 import { BarChart, DonutChart, PieChart, RadarChart } from '@mantine/charts';
 import {
   PolarAngleAxis,
@@ -93,6 +94,24 @@ const EMPTY_RESULT: SummaryResult = { items: [], other: 0, total: 0, areas: 0 };
 const cssColor = (c: string) => `var(--mantine-color-${c.replace('.', '-')})`;
 
 export default function SummaryYearBuilt({ active = true }: { active?: boolean }) {
+  const [tab, setTab] = useState<string | null>('legend');
+  return (
+    <Tabs value={tab} onChange={setTab} h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
+      <Tabs.List style={{ flexShrink: 0 }}>
+        <Tabs.Tab value="legend">Legend</Tabs.Tab>
+        <Tabs.Tab value="charts">Charts</Tabs.Tab>
+      </Tabs.List>
+      <Tabs.Panel value="legend" style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        <LegendYearBuilt />
+      </Tabs.Panel>
+      <Tabs.Panel value="charts" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <ChartSummaryYearBuilt active={active && tab === 'charts'} />
+      </Tabs.Panel>
+    </Tabs>
+  );
+}
+
+function ChartSummaryYearBuilt({ active }: { active: boolean }) {
   const mode = useYearBuiltStore((s) => s.year_builtMode);
 
   // The querystring the table is currently using (level + search + filters + scope).

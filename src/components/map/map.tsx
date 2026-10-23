@@ -429,7 +429,6 @@ export default function Map({
 
   const setMap = useMapStore((s) => s.setMap);
 
-  const [zoom, setZoom] = useState("6.0");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -437,6 +436,8 @@ export default function Map({
     useState<PerformanceMetrics>(INITIAL_METRICS);
 
   const [showMetrics, setShowMetrics] = useState(true);
+  const metricsEnabled = useRef(true);
+  metricsEnabled.current = showMetrics && active;
 
   // ----------------------------------------------------------
   // Create MapLibre map
@@ -465,9 +466,11 @@ export default function Map({
         minZoom: 6,
 
         trackResize: false,
+        // Bound GPU fill cost on high-density displays.
+        pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
         maxPitch: 85, 
         canvasContextAttributes: {
-          antialias: true,
+          antialias: false,
         },
 
         transformRequest: (url, resourceType) => {
@@ -542,11 +545,13 @@ export default function Map({
     let frameDurationSum = 0;
     let frameDurationCount = 0;
     let lastMetricsUpdate = 0;
+    let lastCameraUpdate = 0;
 
     const updateCamera = () => {
+      const now = performance.now();
+      if (!metricsEnabled.current || now - lastCameraUpdate < 250) return;
+      lastCameraUpdate = now;
       const currentZoom = map.getZoom();
-
-      setZoom(currentZoom.toFixed(1));
 
       setMetrics((previous) => ({
         ...previous,
@@ -558,6 +563,14 @@ export default function Map({
 
     // Count actual MapLibre render events.
     const onRender = () => {
+      if (!metricsEnabled.current) {
+        frameCount = 0;
+        frameDurationSum = 0;
+        frameDurationCount = 0;
+        lastFrameAt = 0;
+        fpsStart = performance.now();
+        return;
+      }
       const now = performance.now();
 
       frameCount++;
@@ -601,6 +614,7 @@ export default function Map({
 
     // Avoid repeatedly counting rendered features on every frame.
     const updateRenderedFeatures = () => {
+      if (!metricsEnabled.current || map.isMoving()) return;
       const now = performance.now();
 
       if (now - lastMetricsUpdate < 1000) return;
@@ -621,10 +635,11 @@ export default function Map({
 
     const onRenderWithMetrics = () => {
       onRender();
-      updateRenderedFeatures();
     };
 
     map.on("render", onRenderWithMetrics);
+    // This diagnostic scans all layers: run only after the map settles, never in a render callback.
+    map.on("idle", updateRenderedFeatures);
 
     map.on("zoom", updateCamera);
     map.on("pitch", updateCamera);
@@ -632,6 +647,7 @@ export default function Map({
 
     // Display zero FPS when the map is no longer rendering.
     const fpsInterval = window.setInterval(() => {
+      if (!metricsEnabled.current) return;
       if (performance.now() - lastRenderAt > 1500) {
         setMetrics((previous) => {
           if (
@@ -736,7 +752,6 @@ export default function Map({
         }
 
         map.resize();
-        map.redraw();
       });
     });
 
@@ -754,6 +769,7 @@ export default function Map({
       window.clearInterval(fpsInterval);
 
       map.off("render", onRenderWithMetrics);
+      map.off("idle", updateRenderedFeatures);
 
       map.off("zoom", updateCamera);
       map.off("pitch", updateCamera);
@@ -792,7 +808,6 @@ export default function Map({
       }
 
       map.resize();
-      map.redraw();
     });
 
     return () => cancelAnimationFrame(id);

@@ -457,8 +457,13 @@ export default function SmvLayer({
       ...[...HL_IDS].reverse(),
     ];
     const TOP_ID = HL_IDS[0]; // topmost SMV layer
+    let lastLayerOrder = '';
 
     const place = () => {
+      if (!map.getLayer(TOP_ID)) return;
+      const layerOrder = map.getLayersOrder().join('\n');
+      if (layerOrder === lastLayerOrder) return;
+      lastLayerOrder = layerOrder;
       const style = map.getStyle();
       if (!style) return; // map was already removed
       const ids = style.layers.map((l) => l.id);
@@ -539,7 +544,7 @@ export default function SmvLayer({
 
   // 6) Pulse: the red halo fades and blurs in and out
   useEffect(() => {
-    if (!map || selectedId === null) return;
+    if (!map || selectedId === null || !visible || !ZONALS.some(z => enabled[z.key])) return;
 
     let raf = 0;
     const start = performance.now();
@@ -560,7 +565,7 @@ export default function SmvLayer({
     raf = requestAnimationFrame(tick);
 
     return () => cancelAnimationFrame(raf);
-  }, [map, selectedId]);
+  }, [map, selectedId, visible, enabled]);
 
   // 7) Zoom to the selected road, once per selection, for BOTH sources of selection.
   //    - map click: zooms right away from the clicked tile feature
