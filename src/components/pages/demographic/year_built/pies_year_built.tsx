@@ -138,6 +138,9 @@ export default function YearBuiltPies({ visible = true, opacity = 1 }: { visible
     let location: maplibregl.LngLat;
     let lastHoverAt = 0;
     const hide = () => {
+      if (code && map.getLayer('year_built-hover-fill')) {
+        map.setFilter('year_built-hover-fill', ['==', ['get', 'code'], '']);
+      }
       code = undefined;
       clearTimeout(timer);
       request?.abort();
@@ -170,6 +173,9 @@ export default function YearBuiltPies({ visible = true, opacity = 1 }: { visible
       }
       hide();
       code = nextCode;
+      if (map.getLayer('year_built-hover-fill')) {
+        map.setFilter('year_built-hover-fill', ['==', ['to-string', ['get', 'code']], nextCode]);
+      }
       const cached = cache.get(nextCode);
       if (cached) { display(cached); return; }
       timer = setTimeout(async () => {
@@ -184,7 +190,7 @@ export default function YearBuiltPies({ visible = true, opacity = 1 }: { visible
           const item = data.items[0];
           if (item) { cache.set(nextCode, item); display(item); }
         } catch {
-          if (!ctrl.signal.aborted) { popup.remove(); code = undefined; }
+          if (!ctrl.signal.aborted) hide();
         }
       }, 140);
     };

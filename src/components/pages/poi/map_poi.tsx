@@ -201,23 +201,8 @@ export default function PoiLayer({ mapPaneRef, visible = true }: PoiLayerProps) 
     activePageRef.current = activePage;
   }, [activePage]);
 
-  // Keep the map canvas the same size as its container (and the pane) whenever they change
-  useEffect(() => {
-    if (!map) return;
-
-    let frame = 0;
-    const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => map.resize());
-    });
-    observer.observe(map.getContainer());
-    if (mapPaneRef?.current) observer.observe(mapPaneRef.current);
-
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, [map, mapPaneRef]);
+  // Canvas resizing is owned by the map component. A second observer here would
+  // resize the WebGL buffer repeatedly during sidebar and splitter transitions.
 
   // true from the moment the POI page is opened until the map has zoomed to the data
   const zoomPending = useRef(false);

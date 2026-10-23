@@ -1,3 +1,5 @@
+import { useTablePageSize } from '@/hooks/use_table_page_size';
+import { pageForTableSize } from '@/lib/table_paging';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActionIcon,
@@ -13,13 +15,14 @@ import {
   TextInput,
 } from '@mantine/core';
 import { useDebouncedValue, useLocalStorage } from '@mantine/hooks';
-import { IconColumns3, IconFilterOff, IconSearch, IconX } from '@tabler/icons-react';
+import { IconChevronDown, IconChevronRight, IconColumns3, IconFilterOff, IconSearch, IconX } from '@tabler/icons-react';
 import { DataTable, type DataTableColumn, type DataTableSortStatus } from 'mantine-datatable';
 import { usePopulationStore, type PopulationMode } from '@/stores/demographic/population_stores';
 import { useGlobalStore } from '@/stores/global_stores';
 import { basePath } from '@/lib/config';
 import { BORDER, HEADER_BG, HOVER_BG, NAVY, PANEL_BG } from '@/lib/theme_colors';
 import { MODES } from './map_population';
+import PopulationSexDetails from './sex_details_population';
 
 // One row from /api/pages/population/table (the columns that do not apply to a mode are null)
 type PopulationRow = {
@@ -30,6 +33,8 @@ type PopulationRow = {
   pro_name: string | null;
   reg_name: string | null;
   population: number | string;
+  sex_male: number | string;
+  sex_female: number | string;
 };
 
 type TableResponse = {
@@ -42,8 +47,6 @@ type LocateResponse = {
   page: number | null; // 1-based
 };
 
-const DEFAULT_PAGE_SIZE = 10;
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 // Background of the selected row
 const SELECTED_BG = 'var(--mantine-color-blue-1)';
@@ -200,7 +203,8 @@ export default function DataTablePopulation() {
   const [debouncedFilters] = useDebouncedValue(filters, 300);
   const [debouncedNumFilter] = useDebouncedValue(numFilter, 300);
   const [sortStatus, setSortStatus] = useState<DataTableSortStatus<PopulationRow>>(DEFAULT_SORT);
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const { tableRef, pageSize } = useTablePageSize();
+  const [expandedCodes, setExpandedCodes] = useState<unknown[]>([]);
 
   const setFilter = (key: FilterKey, text: string) =>
     setFilters((cur) => ({ ...cur, [key]: text }));
@@ -254,12 +258,11 @@ export default function DataTablePopulation() {
     setPopulationTableQuery(baseKey);
   }, [baseKey, setPopulationTableQuery]);
 
-  // The page belongs to one query and one page size: a new query (or a new mode) or a new
-  // rows-per-page value starts at page 1 again. Stored together with its key, so there is no
-  // request with a stale page.
+  // A new query starts at page 1; height changes keep the previous first row in view.
+  // The stored key includes its original size for map-selection locate responses.
   const pageKey = `${baseKey}&ps=${pageSize}`;
   const [pageState, setPageState] = useState({ key: '', page: 1 });
-  const page = pageState.key === pageKey ? pageState.page : 1;
+  const page = pageForTableSize(pageState, baseKey, pageSize);
 
   // ----- Fetch the current page ----------------------------------------------
   const [data, setData] = useState<TableResponse | null>(null);
@@ -349,6 +352,24 @@ export default function DataTablePopulation() {
         hidden: !visible.includes(accessor),
       };
 
+      if (accessor === 'name') {
+        col.render = (record) => {
+          const expanded = expandedCodes.includes(record.code);
+          return (
+            <Group gap={6} wrap="nowrap">
+              <ActionIcon size="xs" variant="subtle" color="gray" aria-label={`${expanded ? 'Hide' : 'Show'} male and female counts for ${record.name}`}
+                aria-expanded={expanded} onClick={(event) => {
+                  event.stopPropagation();
+                  setExpandedCodes(current => current.includes(record.code) ? current.filter(code => code !== record.code) : [...current, record.code]);
+                }}>
+                {expanded ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
+              </ActionIcon>
+              <span>{record.name}</span>
+            </Group>
+          );
+        };
+      }
+
       if (accessor === 'population') {
         col.render = (r) => fmt(r.population);
         col.filtering = isNumActive(numFilter);
@@ -368,7 +389,7 @@ export default function DataTablePopulation() {
 
       return col;
     });
-  }, [mode, visible, filters, numFilter]);
+  }, [mode, visible, filters, numFilter, expandedCodes]);
 
   // Clicking a row marks it as selected (the map highlights it)
   const handleRowClick = (row: PopulationRow) => {
@@ -460,7 +481,7 @@ export default function DataTablePopulation() {
       </Group>
 
       {/* Table area */}
-      <Box pos="relative" style={{ flex: 1, minHeight: 0 }}>
+      <Box ref={tableRef} pos="relative" style={{ flex: 1, minHeight: 0 }}>
         <Box pos="absolute" inset={0}>
           <DataTable<PopulationRow>
             height="100%"
@@ -493,14 +514,17 @@ export default function DataTablePopulation() {
             }}
             columns={columns}
             records={records}
+            rowExpansion={{
+              allowMultiple: true,
+              expanded: { recordIds: expandedCodes, onRecordIdsChange: setExpandedCodes },
+              content: ({ record }) => <PopulationSexDetails name={record.name} male={record.sex_male} female={record.sex_female} />,
+            }}
             fetching={fetching}
             sortStatus={sortStatus}
             onSortStatusChange={setSortStatus}
             totalRecords={total}
             recordsPerPage={pageSize}
-            recordsPerPageOptions={PAGE_SIZE_OPTIONS}
-            onRecordsPerPageChange={setPageSize}
-            recordsPerPageLabel="Rows per page"
+
             page={page}
             onPageChange={(p) => setPageState({ key: pageKey, page: p })}
             paginationText={({ from, to }) => `${from} - ${to} of ${totalLabel}`}

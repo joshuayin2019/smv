@@ -8,6 +8,7 @@ import {
   type YearBuiltRecord,
 } from "@/stores/demographic/year_built_stores";
 import { basePath } from "@/lib/config";
+import { arrangeDemographicLayers } from '@/lib/demographic_layer_order';
 import YearBuiltPies from './pies_year_built';
 
 type Expr = maplibregl.ExpressionSpecification;
@@ -53,12 +54,14 @@ const LABEL_FONT = ["Open Sans Semibold", "Arial Unicode MS Bold"];
 const SOURCE_ID = "year_built";
 const FILL_ID = "year_built-fill";
 const LINE_ID = "year_built-line";
+const HALO_ID = "year_built-boundary-halo";
+const HOVER_ID = "year_built-hover-fill";
 const SEL_FILL_ID = "year_built-sel-fill";
 const SEL_LINE_ID = "year_built-sel-line";
 const LABEL_ID = "year_built-label";
-export const POPULATION_LAYER_IDS = [LABEL_ID, SEL_LINE_ID, SEL_FILL_ID, LINE_ID, FILL_ID];
+export const POPULATION_LAYER_IDS = [LABEL_ID, SEL_LINE_ID, SEL_FILL_ID, LINE_ID, HALO_ID, HOVER_ID, FILL_ID];
 
-const FILL_OPACITY = 0.015;
+const FILL_OPACITY = 0.045;
 const DIM_FACTOR = 0.5; // other areas while one is selected
 
 /* ---------------- Expression helpers ---------------- */
@@ -197,13 +200,42 @@ export default function YearBuiltLayer({ visible = true, opacity = 1 }: Props) {
     });
 
     map.addLayer({
+      id: HOVER_ID,
+      type: "fill",
+      source: SOURCE_ID,
+      "source-layer": "year_built",
+      minzoom: MODE_MIN_ZOOM[mode],
+      filter: noneFilter,
+      layout: { visibility: "none" },
+      paint: { "fill-color": "#2585e6", "fill-opacity": 0.24 },
+    });
+
+    map.addLayer({
+      id: HALO_ID,
+      type: "line",
+      source: SOURCE_ID,
+      "source-layer": "year_built",
+      minzoom: MODE_MIN_ZOOM[mode],
+      layout: { "line-join": "round", "line-cap": "round", visibility: "none" },
+      paint: {
+        "line-color": "#ffffff",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 6, 3.5, 12, 5, 16, 6],
+        "line-opacity": 0.95,
+      },
+    });
+
+    map.addLayer({
       id: LINE_ID,
       type: "line",
       source: SOURCE_ID,
       "source-layer": "year_built",
       minzoom: MODE_MIN_ZOOM[mode],
       layout: { "line-join": "round", visibility: "none" },
-      paint: { "line-color": "#238ac2", "line-width": 1.5, "line-opacity": 0.9 },
+      paint: {
+        "line-color": "#163f78",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 6, 1.5, 12, 2.5, 16, 3.5],
+        "line-opacity": 1,
+      },
     });
 
     // Selected area: stronger fill + thick outline (filter is set in effect 4)
@@ -224,7 +256,7 @@ export default function YearBuiltLayer({ visible = true, opacity = 1 }: Props) {
       "source-layer": "year_built",
       filter: noneFilter as any,
       layout: { "line-join": "round", visibility: "none" },
-      paint: { "line-color": "#ff2d55", "line-width": 3 },
+      paint: { "line-color": "#ff2d55", "line-width": 4 },
     });
 
     // Labels: year_built count, the area name below it.
@@ -326,11 +358,13 @@ export default function YearBuiltLayer({ visible = true, opacity = 1 }: Props) {
     if (!map || !scopePsa) return;
     const base = selectedCode !== null ? opacity * DIM_FACTOR : opacity;
 
-    [FILL_ID, LINE_ID].forEach((id) => {
+    [FILL_ID, HOVER_ID, HALO_ID, LINE_ID].forEach((id) => {
       if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", show ? "visible" : "none");
     });
     if (map.getLayer(FILL_ID)) map.setPaintProperty(FILL_ID, "fill-opacity", FILL_OPACITY * base);
-    if (map.getLayer(LINE_ID)) map.setPaintProperty(LINE_ID, "line-opacity", 0.7 * opacity);
+    if (map.getLayer(HOVER_ID)) map.setPaintProperty(HOVER_ID, "fill-opacity", 0.24 * opacity);
+    if (map.getLayer(HALO_ID)) map.setPaintProperty(HALO_ID, "line-opacity", 0.95 * opacity);
+    if (map.getLayer(LINE_ID)) map.setPaintProperty(LINE_ID, "line-opacity", opacity);
     if (map.getLayer(LABEL_ID)) map.setPaintProperty(LABEL_ID, "text-opacity", opacity);
   }, [map, scopeKey, mode, show, opacity, selectedCode]);
 
@@ -351,21 +385,9 @@ export default function YearBuiltLayer({ visible = true, opacity = 1 }: Props) {
   useEffect(() => {
     if (!map || !scopePsa) return;
 
-    const order = [FILL_ID, LINE_ID, SEL_FILL_ID, SEL_LINE_ID, LABEL_ID]; // bottom -> top
-
     const place = () => {
       if (!map.getLayer(FILL_ID)) return;
-      const ids = map.getLayersOrder();
-      const topId = [...order].reverse().find((id) => ids.includes(id));
-      if (!topId) return; // year_built layers not added yet
-
-      const before = ids.find((id) => id.startsWith("smv-") || id.startsWith("poi-"));
-
-      // already in place -> stop, so moveLayer doesn't re-trigger the events forever
-      const top = ids.indexOf(topId);
-      if (before ? top + 1 === ids.indexOf(before) : top === ids.length - 1) return;
-
-      order.forEach((id) => map.getLayer(id) && map.moveLayer(id, before));
+      arrangeDemographicLayers(map);
     };
 
     place();

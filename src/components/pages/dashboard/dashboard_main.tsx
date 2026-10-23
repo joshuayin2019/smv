@@ -1,256 +1,151 @@
-import {
-  Badge, Box, Flex, Grid, Group, Paper, Progress, RingProgress, SimpleGrid, Stack, Text, Title,
-} from '@mantine/core';
-import dynamic from 'next/dynamic';
-import type { ReactNode } from 'react';
-// Adjust this path to wherever theme_colors.ts lives in your project.
-import {
-  ACCENT, BORDER, HEADER_BG, NAVY_DEEP, PANEL_BG,
-} from '@/lib/theme_colors';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Alert, Badge, Box, Button, Group, Loader, Paper, Progress, SegmentedControl, SimpleGrid, Skeleton, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { DonutChart } from '@mantine/charts';
+import { IconArrowUpRight, IconBuildingCommunity, IconMapPin, IconRefresh, IconRoute, IconUsers } from '@tabler/icons-react';
+import { useGlobalStore } from '@/stores/global_stores';
+import { basePath } from '@/lib/config';
+import { BORDER, NAVY, NAVY_DEEP } from '@/lib/theme_colors';
+import { SAMPLE_PARCELS, type DashboardData, type DashboardItem } from '@/lib/pages/dashboard/dashboard_types';
 
-const MAP_HEIGHT = 300;
+const full = (n: number) => n.toLocaleString('en-PH');
+const compact = (n: number) => new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
+const peso = (n: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 0 }).format(n);
+const PARCEL_TOTAL = SAMPLE_PARCELS.reduce((sum, item) => sum + item.value, 0);
 
-// Leaflet needs the browser, so load the map on the client only.
-const PhilippinesMap = dynamic(() => import('./PhilippinesMap'), {
-  ssr: false,
-  loading: () => <Box h={MAP_HEIGHT} bg={PANEL_BG} style={{ borderRadius: 6 }} />,
-});
-
-// ---------- Static sample data (replace with API data later) ----------
-const GOOD = '#0b7a12'; // readable green for small text on light backgrounds
-const MID_BLUE = '#4f6fd0';
-const SOFT_BLUE = '#9db0e8';
-const AXIS_TEXT = '#5b6a99';
-
-const STATS = [
-  { label: 'Population', value: '115.8M', note: '+0.8% yearly growth' },
-  { label: 'Market value', value: '₱18,450', note: '+3.4% per sqm' },
-  { label: 'Points of interest', value: '100,482', note: '1,240 added this month' },
-  { label: 'Parcels', value: '2.18M', note: '+1.2% this quarter' },
-];
-
-const MONTHS = ['Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
-const POI_ADDED = [320, 410, 380, 520, 610, 560, 690, 740, 680, 820, 780, 900];
-const PARCELS_UPDATED = [210, 260, 300, 280, 390, 450, 420, 520, 560, 500, 610, 660];
-
-const CLASSIFICATION = [
-  { name: 'Residential', value: 58, color: NAVY_DEEP },
-  { name: 'Commercial', value: 24, color: MID_BLUE },
-  { name: 'Industrial', value: 12, color: ACCENT },
-  { name: 'Agricultural and other', value: 6, color: SOFT_BLUE },
-];
-
-// [name, longitude, latitude, points of interest]
-const CITIES: [string, number, number, number][] = [
-  ['Metro Manila', 121.0, 14.6, 21500],
-  ['Cebu City', 123.9, 10.32, 8200],
-  ['Davao City', 125.6, 7.07, 6900],
-  ['Cagayan de Oro', 124.65, 8.48, 3600],
-  ['Iloilo City', 122.56, 10.72, 3100],
-  ['Baguio', 120.6, 16.4, 2400],
-  ['Bacolod', 122.95, 10.67, 2200],
-  ['Zamboanga City', 122.08, 6.91, 1900],
-  ['Legazpi', 123.74, 13.14, 1500],
-  ['Tacloban', 125.0, 11.24, 1400],
-  ['General Santos', 125.17, 6.11, 1300],
-  ['Puerto Princesa', 118.74, 9.74, 1200],
-  ['Laoag', 120.59, 18.2, 900],
-  ['Tuguegarao', 121.73, 17.61, 800],
-];
-
-// ---------- Helpers ----------
-type Pt = [number, number];
-// Smooth curve through points (Catmull-Rom converted to cubic Bezier).
-const smooth = (pts: Pt[]) => {
-  let d = `M${pts[0][0]} ${pts[0][1]}`;
-  for (let i = 0; i < pts.length - 1; i += 1) {
-    const p0 = pts[i - 1] ?? pts[i];
-    const p1 = pts[i];
-    const p2 = pts[i + 1];
-    const p3 = pts[i + 2] ?? p2;
-    d += ` C${p1[0] + (p2[0] - p0[0]) / 6} ${p1[1] + (p2[1] - p0[1]) / 6} ${p2[0] - (p3[0] - p1[0]) / 6} ${p2[1] - (p3[1] - p1[1]) / 6} ${p2[0]} ${p2[1]}`;
-  }
-  return d;
-};
-
-// ---------- Panel: white card with a themed header band ----------
-function Panel({
-  title, subtitle, right, children,
-}: { title: string; subtitle?: string; right?: ReactNode; children: ReactNode }) {
-  return (
-    <Paper withBorder radius="md" h="100%" style={{ borderColor: BORDER, overflow: 'hidden' }}>
-      <Group
-        justify="space-between"
-        align="center"
-        px="md"
-        py={8}
-        bg={HEADER_BG}
-        style={{ borderBottom: `1px solid ${BORDER}`, borderLeft: `3px solid ${NAVY_DEEP}` }}
-      >
-        <Group gap={8} align="baseline">
-          <Title order={5} c={NAVY_DEEP}>{title}</Title>
-          {subtitle && <Text size="xs" c={AXIS_TEXT}>{subtitle}</Text>}
-        </Group>
-        {right}
-      </Group>
-      <Box p="md">{children}</Box>
-    </Paper>
-  );
+function Card({ title, eyebrow, action, children }: { title: string; eyebrow?: string; action?: ReactNode; children: ReactNode }) {
+  return <Paper withBorder radius="lg" p="lg" h="100%" style={{ borderColor: BORDER, background: '#fff' }}>
+    <Group justify="space-between" align="flex-start" mb="lg" wrap="nowrap">
+      <div>{eyebrow && <Text fz={10} fw={700} c="#71809a" tt="uppercase" style={{ letterSpacing: 1.4 }} mb={5}>{eyebrow}</Text>}<Title order={4} fz={17} c={NAVY_DEEP}>{title}</Title></div>
+      {action}
+    </Group>{children}
+  </Paper>;
 }
 
-// ---------- Area chart ----------
-const CW = 640;
-const CH = 190;
-const PAD = { l: 40, r: 10, t: 8, b: 24 };
-
-function AreaChart() {
-  const plotW = CW - PAD.l - PAD.r;
-  const plotH = CH - PAD.t - PAD.b;
-  const x = (i: number) => PAD.l + (i * plotW) / (MONTHS.length - 1);
-  const y = (v: number) => PAD.t + plotH * (1 - v / 1000);
-  const base = PAD.t + plotH;
-  const line = (data: number[]) => smooth(data.map((v, i) => [x(i), y(v)] as Pt));
-  const area = (data: number[]) => `${line(data)} L${x(data.length - 1)} ${base} L${x(0)} ${base} Z`;
-
-  return (
-    <svg viewBox={`0 0 ${CW} ${CH}`} width="100%" role="img" aria-label="Monthly points of interest added and parcels updated">
-      {[0, 250, 500, 750, 1000].map((t) => (
-        <g key={t}>
-          <line x1={PAD.l} x2={CW - PAD.r} y1={y(t)} y2={y(t)} stroke={BORDER} />
-          <text x={PAD.l - 8} y={y(t) + 4} textAnchor="end" fontSize="11" fill={AXIS_TEXT}>{t}</text>
-        </g>
-      ))}
-      <path d={area(POI_ADDED)} fill={NAVY_DEEP} fillOpacity={0.22} />
-      <path d={line(POI_ADDED)} fill="none" stroke={NAVY_DEEP} strokeWidth="2" />
-      <path d={area(PARCELS_UPDATED)} fill={ACCENT} fillOpacity={0.25} />
-      <path d={line(PARCELS_UPDATED)} fill="none" stroke={ACCENT} strokeWidth="2" />
-      {MONTHS.map((m, i) => (
-        <text key={`${m}-${i}`} x={x(i)} y={CH - 6} textAnchor="middle" fontSize="11" fill={AXIS_TEXT}>{m}</text>
-      ))}
-    </svg>
-  );
+function Ranking({ data, currency = false }: { data: DashboardItem[]; currency?: boolean }) {
+  const max = Math.max(...data.map(item => item.value), 1);
+  if (!data.length) return <Text size="sm" c="dimmed" py="xl">No records in your assigned scope.</Text>;
+  return <Stack gap="md">{data.map((item, index) => <div key={item.name}>
+    <Group justify="space-between" gap="xs" mb={6} wrap="nowrap"><Text size="xs" c="#45536e" style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{item.name}</Text>
+      <Text size="sm" fw={700} c={NAVY_DEEP} style={{ flexShrink: 0 }}>{currency ? peso(item.value) : full(item.value)}</Text></Group>
+    <Progress value={item.value / max * 100} color={item.color ?? (index === 0 ? '#2458bd' : '#9aade0')} size={7} radius="xl" />
+  </div>)}</Stack>;
 }
 
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <Group gap={6} wrap="nowrap">
-      <Box w={8} h={8} bg={color} style={{ borderRadius: 2 }} />
-      <Text size="xs" c={NAVY_DEEP}>{label}</Text>
-    </Group>
-  );
+function Distribution({ data, totalLabel }: { data: DashboardItem[]; totalLabel: string }) {
+  const total = data.reduce((sum, item) => sum + item.value, 0);
+  if (!total) return <Text size="sm" c="dimmed" py="xl">No reported counts in your scope.</Text>;
+  return <Group justify="center" align="center" gap="xl" wrap="wrap">
+    <Box pos="relative" w={175} h={175}>
+      <DonutChart h={175} w={175} size={175} thickness={25} data={data.filter(item => item.value > 0).map(item => ({ ...item, color: item.color ?? '#2458bd' }))} withTooltip strokeWidth={3} />
+      <Stack gap={0} align="center" justify="center" style={{ position: 'absolute', inset: 42, pointerEvents: 'none' }}>
+        <Text fz={25} fw={800} c={NAVY_DEEP}>{compact(total)}</Text><Text fz={10} c="dimmed">{totalLabel}</Text>
+      </Stack>
+    </Box>
+    <Stack gap={10} style={{ flex: 1, minWidth: 180 }}>{data.map(item => <Group key={item.name} justify="space-between" wrap="nowrap" gap="xs">
+      <Group gap={7} wrap="nowrap"><Box w={8} h={8} style={{ background: item.color ?? '#2458bd', borderRadius: 2, flexShrink: 0 }} /><Text size="xs">{item.name}</Text></Group>
+      <Text size="xs" fw={700} style={{ flexShrink: 0 }}>{full(item.value)} <Text span fw={400} c="dimmed">· {(item.value / total * 100).toFixed(1)}%</Text></Text>
+    </Group>)}</Stack>
+  </Group>;
 }
 
-// ---------- Page ----------
 export default function DashboardMain() {
-  const topCities = [...CITIES].sort((a, b) => b[3] - a[3]).slice(0, 6);
-  const maxCount = topCities[0][3];
+  const auth = useGlobalStore(s => s.auth);
+  const setPage = useGlobalStore(s => s.setActivePage);
+  const scopes = JSON.stringify({ smv: auth?.scope_smv ?? [], poi: auth?.scope_poi ?? [], psa: auth?.scope_psa ?? [] });
+  const [response, setResponse] = useState<{ key: string; data: DashboardData } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [refresh, setRefresh] = useState(0);
+  const [demographicView, setDemographicView] = useState('buildings');
+  const data = response?.key === scopes ? response.data : undefined;
+  useEffect(() => {
+    if (!auth) return;
+    const ctrl = new AbortController();
+    setLoading(true); setError('');
+    fetch(`${basePath}/api/pages/dashboard?${new URLSearchParams({ scopes })}`, { signal: ctrl.signal })
+      .then(async result => { if (!result.ok) throw new Error('Dashboard data could not be loaded. Please retry.'); return result.json() as Promise<DashboardData>; })
+      .then(result => { if (!ctrl.signal.aborted) { setResponse({ key: scopes, data: result }); setLoading(false); } })
+      .catch(e => { if (!ctrl.signal.aborted) { setError(e.message); setLoading(false); } });
+    return () => ctrl.abort();
+  }, [scopes, refresh, !!auth]);
+  const demographic = data?.demographic;
+  const demographics = demographicView === 'years' ? demographic?.years : demographicView === 'floors' ? demographic?.floors : demographic?.buildings;
+  const demographicPage = demographicView === 'years' ? 'Year Built of Buildings' : demographicView === 'floors' ? 'Number of Story of Building' : 'Type of Buildings';
+  const sexTotal = (demographic?.male ?? 0) + (demographic?.female ?? 0);
+  const link = (page: string) => <Button size="compact-xs" variant="subtle" color={NAVY} rightSection={<IconArrowUpRight size={13} />} onClick={() => setPage(page)}>Explore</Button>;
+  const metric = (value: number | undefined, sample = false) => loading && !data && !sample ? <Skeleton h={34} w={110} my={4} /> : <Text fz={32} fw={800} lh={1.4} c={NAVY_DEEP}>{value === undefined ? '—' : full(value)}</Text>;
+  const unavailable = <Text size="sm" c="dimmed">Data unavailable. Refresh to retry.</Text>;
+  const cards = [
+    { title: 'Market value records', value: data?.market?.roads, note: 'Road records in the SMV inventory', icon: IconRoute, color: '#2458bd', page: 'Schedule of Market Value' },
+    { title: 'Points of interest', value: data?.poi?.total, note: 'Mapped places in your POI scope', icon: IconMapPin, color: '#0b927c', page: 'Point of Interest' },
+    { title: 'Population', value: demographic?.population, note: 'People · PSA 2020', icon: IconUsers, color: '#8a53c4', page: 'Population' },
+    { title: 'Parcels', value: PARCEL_TOTAL, note: 'Illustrative inventory · not connected', icon: IconBuildingCommunity, color: '#ce8515', sample: true },
+  ];
+  return <Box h="calc(100dvh - 74px)" style={{ overflowY: 'auto', background: '#f4f6fb', borderRadius: 12 }}>
+    <Stack gap="lg" p={{ base: 'sm', md: 'lg' }} maw={1600} mx="auto">
+      <Paper radius="lg" p={{ base: 'lg', md: 28 }} style={{ background: `linear-gradient(115deg, ${NAVY_DEEP}, #163c88)`, color: '#fff' }}>
+        <Group justify="space-between" align="flex-start" gap="lg">
+          <div><Text fz={10} fw={700} c="#b4caf1" mb={8} style={{ letterSpacing: 2 }}>SMV · AREA OVERVIEW</Text>
+            <Title order={2} fz={{ base: 25, md: 31 }} fw={750} mb={8}>Your area, at a glance.</Title>
+            <Text size="sm" c="#cedbf1" maw={600}>Market values, places and communities in one view. Database figures follow your assigned geographic scopes.</Text>
+          </div>
+          <Stack gap={8} align="flex-end"><Button size="xs" variant="white" color={NAVY} leftSection={loading ? <Loader size={13} /> : <IconRefresh size={14} />} disabled={loading} onClick={() => setRefresh(n => n + 1)}>Refresh overview</Button>
+            <Text fz={10} c="#b4caf1">{data ? `Updated ${new Date(data.generatedAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} PHT` : 'Loading scoped summaries'}</Text>
+          </Stack>
+        </Group>
+      </Paper>
 
-  return (
-    <Stack gap="md" p="md">
-      <Group justify="space-between" align="center">
-        <div>
-          <Title order={3} c={NAVY_DEEP} lh={1.2}>Dashboard</Title>
-          <Text size="xs" c="dimmed">Schedule of market value overview for the Philippines</Text>
-        </div>
-        <Badge
-          radius="sm"
-          size="md"
-          styles={{ root: { backgroundColor: HEADER_BG, color: NAVY_DEEP } }}
-        >
-          Sample data as of Oct 22, 2026
-        </Badge>
-      </Group>
+      {(error || !!data?.errors.length) && <Alert color="orange" title="Some data could not be refreshed">{error || data?.errors.join('. ')}{data && error ? ' Showing your last loaded figures.' : ''}</Alert>}
 
-      {/* Row 1: population, market value, points of interest, parcels */}
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-        {STATS.map((s) => (
-          <Paper
-            key={s.label}
-            withBorder
-            radius="md"
-            px="md"
-            py="sm"
-            bg={PANEL_BG}
-            style={{ borderColor: BORDER, borderLeft: `3px solid ${NAVY_DEEP}` }}
-          >
-            <Text size="xs" c={NAVY_DEEP} fw={600}>{s.label}</Text>
-            <Text fz={22} fw={700} c={NAVY_DEEP} lh={1.25} mt={2}>{s.value}</Text>
-            <Text fz={11} mt={2} fw={500} style={{ color: GOOD }}>{s.note}</Text>
-          </Paper>
-        ))}
+      <SimpleGrid cols={{ base: 1, sm: 2, xl: 4 }} spacing="md">
+        {cards.map(card => <Paper key={card.title} withBorder radius="lg" p="lg" style={{ borderColor: BORDER }}>
+          <Group justify="space-between" mb="xs"><ThemeIcon size={36} radius="md" variant="light" color={card.color}><card.icon size={20} stroke={1.6} /></ThemeIcon>
+            {card.sample ? <Badge size="xs" color="orange" variant="light">Sample data</Badge> : <Badge size="xs" color="gray" variant="light">Database</Badge>}</Group>
+          <Text size="xs" fw={600} c="#61708c">{card.title}</Text>{metric(card.value, card.sample)}
+          <Group justify="space-between" align="center" gap={4}><Text fz={10} c="dimmed">{card.note}</Text>{card.page && <Button size="compact-xs" variant="subtle" px={3} aria-label={`Open ${card.title}`} onClick={() => setPage(card.page!)}><IconArrowUpRight size={16} /></Button>}</Group>
+        </Paper>)}
       </SimpleGrid>
 
-      {/* Row 2: map (wide) + tall chart on the right */}
-      <Grid gap="md">
-        <Grid.Col span={{ base: 12, lg: 8 }}>
-          <Panel title="Points of interest" subtitle="Larger dots mean more points of interest">
-            <Box h={MAP_HEIGHT} style={{ borderRadius: 6, overflow: 'hidden' }}>
-              <PhilippinesMap cities={CITIES} />
-            </Box>
-          </Panel>
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, lg: 4 }}>
-          <Panel title="Top areas" subtitle="By points of interest">
-            <Stack gap="sm">
-              {topCities.map(([name, , , count], i) => (
-                <div key={name}>
-                  <Group justify="space-between" mb={3}>
-                    <Text size="xs" c={NAVY_DEEP} fw={i === 0 ? 700 : 500}>{name}</Text>
-                    <Text size="xs" c={NAVY_DEEP} fw={i === 0 ? 700 : 500}>{count.toLocaleString('en-PH')}</Text>
-                  </Group>
-                  <Progress
-                    value={(count / maxCount) * 100}
-                    color={i === 0 ? ACCENT : NAVY_DEEP}
-                    size={6}
-                    radius="sm"
-                    styles={{ root: { backgroundColor: HEADER_BG } }}
-                    aria-label={`${name} points of interest`}
-                  />
-                </div>
-              ))}
-            </Stack>
-          </Panel>
-        </Grid.Col>
-      </Grid>
+      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg">
+        <Card eyebrow="Valuation" title="Average market values" action={link('Schedule of Market Value')}>
+          {data?.market ? <><Ranking data={data.market.averages} currency /><Text fz={10} c="dimmed" mt="lg">Unweighted average per road record, using stored zonal values. Zero values are excluded; units follow the source inventory.</Text>
+            <Group gap={6} mt="sm">{data.market.years.slice(0, 5).map(year => <Badge key={year.name} variant="light" color="gray" size="sm">{year.name} · {full(year.value)} records</Badge>)}</Group></> : loading ? <Skeleton h={205} /> : unavailable}
+        </Card>
+        <Card eyebrow="Places" title="Top points of interest categories" action={link('Point of Interest')}>
+          {data?.poi ? <><Ranking data={data.poi.categories} /><Text fz={10} c="dimmed" mt="lg">Top six categories by number of mapped places.</Text></> : loading ? <Skeleton h={205} /> : unavailable}
+        </Card>
+      </SimpleGrid>
 
-      {/* Row 3: two charts side by side */}
-      <Grid gap="md">
-        <Grid.Col span={{ base: 12, md: 6 }}>
-          <Panel
-            title="Monthly activity"
-            subtitle="Last 12 months"
-            right={(
-              <Group gap="sm">
-                <LegendDot color={NAVY_DEEP} label="Points of interest added" />
-                <LegendDot color={ACCENT} label="Parcels updated" />
-              </Group>
-            )}
-          >
-            <AreaChart />
-          </Panel>
-        </Grid.Col>
+      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg">
+        <Card eyebrow="Communities · PSA 2020" title="Population & barangay class" action={link('Population')}>
+          {demographic ? <Stack gap="lg">
+            <Group justify="space-between"><Text size="xs" c="dimmed">{full(demographic.municipalities)} municipalities</Text><Text size="xs" c="dimmed">{full(demographic.barangays)} barangays</Text></Group>
+            <div><Group justify="space-between" mb={8}><Text size="xs" fw={600} c="#2458bd">Male · {full(demographic.male)}</Text><Text size="xs" fw={600} c="#ce8515">Female · {full(demographic.female)}</Text></Group>
+              <Progress.Root size={10} radius="xl"><Progress.Section value={sexTotal ? demographic.male / sexTotal * 100 : 0} color="#2458bd" /><Progress.Section value={sexTotal ? demographic.female / sexTotal * 100 : 0} color="#f59e0b" /></Progress.Root>
+              <Text fz={10} c="dimmed" mt={6}>Shares use the reported male and female counts.</Text>
+            </div>
+            <Ranking data={demographic.classes} /><Button size="compact-xs" variant="subtle" color={NAVY} onClick={() => setPage('Barangay Class')}>Explore barangay classifications →</Button>
+          </Stack> : loading ? <Skeleton h={250} /> : unavailable}
+        </Card>
+        <Card eyebrow="Land inventory" title="Parcels by classification" action={<Badge color="orange" variant="light" size="sm">Sample data</Badge>}>
+          <Distribution data={SAMPLE_PARCELS} totalLabel="sample parcels" />
+          <Text fz={11} c="#8c6c2c" mt="lg">Illustrative figures only. Parcel records are not connected yet; these numbers do not reflect your geographic scope.</Text>
+        </Card>
+      </SimpleGrid>
 
-        <Grid.Col span={{ base: 12, md: 6 }}>
-          <Panel title="Parcels by classification" subtitle="Share of all parcels">
-            <Flex gap="lg" align="center" justify="center" wrap="wrap" mih={190}>
-              <RingProgress
-                size={150}
-                thickness={22}
-                sections={CLASSIFICATION.map((c) => ({ value: c.value, color: c.color, tooltip: `${c.name}: ${c.value}%` }))}
-                label={<Text ta="center" fw={700} size="sm" c={NAVY_DEEP} lh={1.2}>2.18M<br /><Text span fz={11} c="dimmed" fw={400}>parcels</Text></Text>}
-              />
-              <Stack gap={6}>
-                {CLASSIFICATION.map((c) => (
-                  <Group key={c.name} gap={8} wrap="nowrap">
-                    <Box w={9} h={9} bg={c.color} style={{ borderRadius: '50%', flex: 'none' }} />
-                    <Text size="xs" c={NAVY_DEEP}><b>{c.value}%</b> {c.name}</Text>
-                  </Group>
-                ))}
-              </Stack>
-            </Flex>
-          </Panel>
-        </Grid.Col>
-      </Grid>
+      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg">
+        <Card eyebrow="Buildings · PSA 2020" title="Building profile" action={link(demographicPage)}>
+          <SegmentedControl size="xs" mb="lg" value={demographicView} onChange={setDemographicView} data={[{ value: 'buildings', label: 'Building type' }, { value: 'years', label: 'Year built' }, { value: 'floors', label: 'Floors' }]} />
+          {demographic ? <Ranking data={demographics ?? []} /> : loading ? <Skeleton h={250} /> : unavailable}
+          <Text fz={10} c="dimmed" mt="lg">Counts from the supplied PSA fields. Year-built categories include only the listed ranges; omitted years are not inferred.</Text>
+        </Card>
+        <Card eyebrow="Geographic coverage" title="Top areas by points of interest" action={link('Point of Interest')}>
+          {data?.poi ? <Ranking data={data.poi.areas} /> : loading ? <Skeleton h={250} /> : unavailable}
+          <Paper mt="xl" p="md" radius="md" bg="#f4f6fb"><Text size="xs" fw={700} c={NAVY_DEEP}>Read the data in context</Text>
+            <Text size="xs" c="dimmed" mt={5}>SMV, POI and demographic scopes can differ. Building and population figures are based on PSA 2020, while market-value coverage follows the recorded SMV years.</Text></Paper>
+        </Card>
+      </SimpleGrid>
+      <Text ta="center" fz={10} c="dimmed" pb="sm">Database summaries are cached for up to one minute. Parcel figures are illustrative.</Text>
     </Stack>
-  );
+  </Box>;
 }

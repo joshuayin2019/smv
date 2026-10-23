@@ -134,6 +134,9 @@ export default function BuildingTypePies({ visible = true, opacity = 1 }: { visi
     let location: maplibregl.LngLat;
     let lastHoverAt = 0;
     const hide = () => {
+      if (code && map.getLayer('type_of_buildings-hover-fill')) {
+        map.setFilter('type_of_buildings-hover-fill', ['==', ['get', 'code'], '']);
+      }
       code = undefined;
       clearTimeout(timer);
       request?.abort();
@@ -166,6 +169,9 @@ export default function BuildingTypePies({ visible = true, opacity = 1 }: { visi
       }
       hide();
       code = nextCode;
+      if (map.getLayer('type_of_buildings-hover-fill')) {
+        map.setFilter('type_of_buildings-hover-fill', ['==', ['to-string', ['get', 'code']], nextCode]);
+      }
       const cached = cache.get(nextCode);
       if (cached) { display(cached); return; }
       timer = setTimeout(async () => {
@@ -180,7 +186,7 @@ export default function BuildingTypePies({ visible = true, opacity = 1 }: { visi
           const item = data.items[0];
           if (item) { cache.set(nextCode, item); display(item); }
         } catch {
-          if (!ctrl.signal.aborted) { popup.remove(); code = undefined; }
+          if (!ctrl.signal.aborted) hide();
         }
       }, 140);
     };

@@ -1,5 +1,6 @@
 // FILE: src/lib/pages/population/population_table_controller.ts
 import { conn } from "@/lib/db";
+import { populationMunicipalitySexSql } from './population_sql';
 import type { Scope } from "@/stores/global_stores";
 import { isLevel, type Level } from "@/lib/pages/demographic/population/population_controller";
 
@@ -55,7 +56,7 @@ const LEVEL_FILTERS: Record<Level, FilterKey[]> = {
   barangay: ["mun_name", "pro_name", "reg_name"],
 };
 
-const SORT_COLUMNS = ["code", "name", "reg_name", "pro_name", "mun_name", "population"];
+const SORT_COLUMNS = ["code", "name", "reg_name", "pro_name", "mun_name", "population", "sex_male", "sex_female"];
 
 const OPS: Record<string, string> = {
   eq: "=",
@@ -180,7 +181,9 @@ function buildCore(q: TableQuery) {
   const base = isBgy
     ? `SELECT b.bgy_code AS code, b.bgy_name AS name,
               b.mun_name, b.pro_name, b.reg_name,
-              COALESCE(p.population, 0)::bigint AS population
+              COALESCE(p.population, 0)::bigint AS population,
+              COALESCE(p.sex_male, 0)::bigint AS sex_male,
+              COALESCE(p.sex_female, 0)::bigint AS sex_female
        FROM core.brgy_bndry b
        JOIN data.psa_2020 p ON p.bar_code = b.bgy_code
        WHERE TRUE${scopeFilter.sql}${whereSql}`
@@ -188,8 +191,10 @@ function buildCore(q: TableQuery) {
               ${q.level === "municipality" ? "MAX(b.mun_name)" : "NULL::text"} AS mun_name,
               ${q.level === "municipality" || q.level === "province" ? "MAX(b.pro_name)" : "NULL::text"} AS pro_name,
               MAX(b.reg_name) AS reg_name,
-              SUM(b.population)::bigint AS population
-       FROM data.psa_2020_municipalities b
+              SUM(b.population)::bigint AS population,
+              SUM(b.sex_male)::bigint AS sex_male,
+              SUM(b.sex_female)::bigint AS sex_female
+       FROM ${populationMunicipalitySexSql(scopeFilter.sql)} b
        WHERE TRUE${scopeFilter.sql}${whereSql}
        GROUP BY ${g!.key}`;
 

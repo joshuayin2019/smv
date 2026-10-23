@@ -8,6 +8,8 @@ import {
   type PopulationRecord,
 } from "@/stores/demographic/population_stores";
 import { basePath } from "@/lib/config";
+import { arrangeDemographicLayers } from '@/lib/demographic_layer_order';
+import PopulationSexMarkers from './sex_markers_population';
 
 type Expr = maplibregl.ExpressionSpecification;
 
@@ -296,8 +298,8 @@ export default function PopulationLayer({ visible = true, opacity = 1 }: Props) 
 
     const onClick = (e: maplibregl.MapMouseEvent) => {
       if (useGlobalStore.getState().activePage !== PAGE_NAME) return; // other pages: ignore
-      if (!map.getLayer(FILL_ID) || map.getLayoutProperty(FILL_ID, "visibility") === "none") return;
-      const f = map.queryRenderedFeatures(e.point, { layers: [FILL_ID] })[0];
+      const canPick = map.getLayer(FILL_ID) && map.getLayoutProperty(FILL_ID, "visibility") !== "none";
+      const f = canPick ? map.queryRenderedFeatures(e.point, { layers: [FILL_ID] })[0] : undefined;
       if (!f) {
         usePopulationStore.getState().setSelectedPopulation(null);
         return;
@@ -386,21 +388,9 @@ export default function PopulationLayer({ visible = true, opacity = 1 }: Props) 
   useEffect(() => {
     if (!map || !scopePsa) return;
 
-    const order = [FILL_ID, LINE_ID, SEL_FILL_ID, SEL_LINE_ID, LABEL_ID]; // bottom -> top
-
     const place = () => {
       if (!map.getLayer(FILL_ID)) return;
-      const ids = map.getLayersOrder();
-      const topId = [...order].reverse().find((id) => ids.includes(id));
-      if (!topId) return; // population layers not added yet
-
-      const before = ids.find((id) => id.startsWith("smv-") || id.startsWith("poi-"));
-
-      // already in place -> stop, so moveLayer doesn't re-trigger the events forever
-      const top = ids.indexOf(topId);
-      if (before ? top + 1 === ids.indexOf(before) : top === ids.length - 1) return;
-
-      order.forEach((id) => map.getLayer(id) && map.moveLayer(id, before));
+      arrangeDemographicLayers(map);
     };
 
     place();
@@ -412,5 +402,5 @@ export default function PopulationLayer({ visible = true, opacity = 1 }: Props) 
     };
   }, [map, scopeKey]);
 
-  return null;
+  return <PopulationSexMarkers visible={visible} opacity={opacity} />;
 }

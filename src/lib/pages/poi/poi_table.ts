@@ -1,5 +1,6 @@
 // lib/poi_table.ts  (server only; same pattern as loadPoiTile in poi_tiles.ts)
 import { conn } from "@/lib/db";
+import { cappedPageWindow } from '@/lib/table_paging';
 import { withSlot } from "@/lib/pages/poi/poi_scope";
 import {
   COUNT_CAP,
@@ -87,9 +88,7 @@ export async function loadPoiTable(sp: URLSearchParams): Promise<PoiTablePage> {
   if (q.denied) return { total: 0, capped: false, browsable: 0, rows: [] }; // scope allows nothing
 
   const pageSize = readPageSize(sp);
-  const lastPage = Math.max(1, Math.ceil(MAX_BROWSABLE / pageSize));
-  const page = Math.min(lastPage, Math.max(1, Math.floor(Number(sp.get("page"))) || 1));
-  const offset = (page - 1) * pageSize;
+  const { offset, limit } = cappedPageWindow(Math.floor(Number(sp.get('page'))) || 1, pageSize, MAX_BROWSABLE);
 
   const limitParam = `$${q.params.length + 1}`;
   const offsetParam = `$${q.params.length + 2}`;
@@ -103,7 +102,7 @@ export async function loadPoiTable(sp: URLSearchParams): Promise<PoiTablePage> {
 
   const [count, data] = await Promise.all([
     countRows(sp, q),
-    withSlot(() => conn.query(rowsSql, [...q.params, pageSize, offset])),
+    withSlot(() => conn.query(rowsSql, [...q.params, limit, offset])),
   ]);
 
   // The rows of this page prove that at least offset + rows.length matches exist, even when the

@@ -1,3 +1,5 @@
+import { useTablePageSize } from '@/hooks/use_table_page_size';
+import { pageForTableSize } from '@/lib/table_paging';
 // FILE: src/components/.../datatable_smv.tsx  (replace your server-side SMV table; keep its current location)
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -53,8 +55,6 @@ type LoadedPage = TableResponse & { offset: number };
 // A radius filter that is fully filled in (center + distance in meters)
 type ActiveRadius = { lat: number; lng: number; m: number };
 
-const DEFAULT_PAGE_SIZE = 10;
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 const DISTANCE_COL_WIDTH = 120;
 
@@ -244,7 +244,7 @@ export default function DataTableSMV() {
   const [debouncedFilters] = useDebouncedValue(filters, 300);
   const [debouncedNumFilters] = useDebouncedValue(numFilters, 300);
   const [sortStatus, setSortStatus] = useState<DataTableSortStatus<SmvRow>>(DEFAULT_SORT);
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const { tableRef, pageSize } = useTablePageSize();
 
   const setFilter = (key: FilterKey, text: string) =>
     setFilters((cur) => ({ ...cur, [key]: text }));
@@ -312,7 +312,7 @@ export default function DataTableSMV() {
   // starts at page 1 again. Stored together with its key, so there is no request with a stale page.
   const pageKey = `${baseKey}&ps=${pageSize}`;
   const [pageState, setPageState] = useState({ key: '', page: 1 });
-  const page = pageState.key === pageKey ? pageState.page : 1;
+  const page = pageForTableSize(pageState, baseKey, pageSize);
 
   // ----- Fetch the current page ----------------------------------------------
   const [data, setData] = useState<LoadedPage | null>(null);
@@ -659,7 +659,7 @@ export default function DataTableSMV() {
       )}
 
       {/* Table area */}
-      <Box pos="relative" style={{ flex: 1, minHeight: 0 }}>
+      <Box ref={tableRef} pos="relative" style={{ flex: 1, minHeight: 0 }}>
         <Box pos="absolute" inset={0}>
           <DataTable<SmvRow>
             height="100%"
@@ -697,9 +697,7 @@ export default function DataTableSMV() {
             onSortStatusChange={setSortStatus}
             totalRecords={browsable}
             recordsPerPage={pageSize}
-            recordsPerPageOptions={PAGE_SIZE_OPTIONS}
-            onRecordsPerPageChange={setPageSize}
-            recordsPerPageLabel="Rows per page"
+
             page={page}
             onPageChange={(p) => setPageState({ key: pageKey, page: p })}
             paginationText={({ from, to }) => `${from} - ${to} of ${totalLabel}`}

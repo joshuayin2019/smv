@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { conn } from "@/lib/db";
+import { cappedPageWindow } from '@/lib/table_paging';
 import {
   parseTableQuery,
   FROM_SQL,
@@ -17,9 +18,7 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
 
   const pageSize = clamp(Math.trunc(Number(sp.get("pageSize"))) || DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE);
-  const maxPage = Math.max(1, Math.floor(MAX_BROWSABLE / pageSize));
-  const page = clamp(Math.trunc(Number(sp.get("page"))) || 1, 1, maxPage);
-  const offset = (page - 1) * pageSize;
+  const { offset, limit } = cappedPageWindow(Math.trunc(Number(sp.get('page'))) || 1, pageSize, MAX_BROWSABLE);
 
   const q = parseTableQuery(sp);
   if (q.denied) return NextResponse.json({ total: 0, capped: false, browsable: 0, rows: [] });
@@ -37,7 +36,7 @@ export async function GET(req: NextRequest) {
          ${q.whereSql}
          ORDER BY ${q.orderBy}
          LIMIT $${q.params.length + 1} OFFSET $${q.params.length + 2}`,
-        [...q.params, pageSize, offset]
+        [...q.params, limit, offset]
       ),
     ]);
 

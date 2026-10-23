@@ -10,6 +10,10 @@ export type PopulationRecord = {
 };
 
 type PopulationState = {
+  boundaryHoverEnabled: boolean;
+  setBoundaryHoverEnabled: (enabled: boolean) => void;
+  chartStatus: string;
+  setChartStatus: (status: string) => void;
   populationMode: PopulationMode;
   setPopulationMode: (m: PopulationMode) => void;
 
@@ -22,6 +26,10 @@ type PopulationState = {
 };
 
 export const usePopulationStore = create<PopulationState>((set) => ({
+  boundaryHoverEnabled: true,
+  setBoundaryHoverEnabled: (boundaryHoverEnabled) => set({ boundaryHoverEnabled }),
+  chartStatus: '',
+  setChartStatus: (chartStatus) => set({ chartStatus }),
   populationMode: "municipality",
   setPopulationMode: (populationMode) => set({ populationMode }),
 

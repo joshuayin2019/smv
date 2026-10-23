@@ -1,3 +1,5 @@
+import { useTablePageSize } from '@/hooks/use_table_page_size';
+import { pageForTableSize } from '@/lib/table_paging';
 // FILE: src/components/.../data_table_municipality.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActionIcon, Box, Button, Checkbox, Group, Menu, TextInput } from '@mantine/core';
@@ -25,8 +27,6 @@ type LocateResponse = {
   page: number | null; // 1-based
 };
 
-const DEFAULT_PAGE_SIZE = 10;
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 // Background of the selected row
 const SELECTED_ROW_BG = '#fef3c7';
@@ -133,7 +133,7 @@ export default function DataTableMunicipality() {
   // typing in a column filter would otherwise send a request per keystroke
   const [debouncedFilters] = useDebouncedValue(filters, 300);
   const [sortStatus, setSortStatus] = useState<DataTableSortStatus<Municipality>>(DEFAULT_SORT);
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const { tableRef, pageSize } = useTablePageSize();
 
   const setFilter = (key: FilterKey, text: string) =>
     setFilters((cur) => ({ ...cur, [key]: text }));
@@ -166,11 +166,11 @@ export default function DataTableMunicipality() {
   );
 
   // The page belongs to one query and one page size: a new query (search, filter, sort)
-  // or a new rows-per-page value starts at page 1 again.
+  // resets to page 1. Resizing preserves the first visible row.
   // Stored together with its key, so there is no extra request with a stale page.
   const pageKey = `${baseKey}&ps=${pageSize}`;
   const [pageState, setPageState] = useState({ key: '', page: 1 });
-  const page = pageState.key === pageKey ? pageState.page : 1;
+  const page = pageForTableSize(pageState, baseKey, pageSize);
 
   // ----- Fetch the current page ----------------------------------------------
   const [data, setData] = useState<LoadedPage | null>(null);
@@ -377,7 +377,7 @@ export default function DataTableMunicipality() {
       </Group>
 
       {/* Table area */}
-      <Box pos="relative" style={{ flex: 1, minHeight: 0 }}>
+      <Box ref={tableRef} pos="relative" style={{ flex: 1, minHeight: 0 }}>
         <Box pos="absolute" inset={0}>
           <DataTable<Municipality>
             height="100%"
@@ -414,9 +414,7 @@ export default function DataTableMunicipality() {
             onSortStatusChange={setSortStatus}
             totalRecords={total}
             recordsPerPage={pageSize}
-            recordsPerPageOptions={PAGE_SIZE_OPTIONS}
-            onRecordsPerPageChange={setPageSize}
-            recordsPerPageLabel="Rows per page"
+
             page={page}
             onPageChange={(p) => setPageState({ key: pageKey, page: p })}
             paginationText={({ from, to }) => `${from} - ${to} of ${totalLabel}`}

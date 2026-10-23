@@ -1,3 +1,5 @@
+import { useTablePageSize } from '@/hooks/use_table_page_size';
+import { pageForTableSize } from '@/lib/table_paging';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActionIcon,
@@ -50,8 +52,6 @@ type LocateResponse = {
   page: number | null; // 1-based
 };
 
-const DEFAULT_PAGE_SIZE = 10;
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 // Background of the selected row
 const SELECTED_BG = 'var(--mantine-color-blue-1)';
@@ -216,7 +216,7 @@ export default function DataTableBuildingType() {
   const [debouncedFilters] = useDebouncedValue(filters, 300);
   const [debouncedNumFilter] = useDebouncedValue(numFilter, 300);
   const [sortStatus, setSortStatus] = useState<DataTableSortStatus<BuildingTypeRow>>(DEFAULT_SORT);
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const { tableRef, pageSize } = useTablePageSize();
 
   const setFilter = (key: FilterKey, text: string) =>
     setFilters((cur) => ({ ...cur, [key]: text }));
@@ -270,12 +270,11 @@ export default function DataTableBuildingType() {
     setBuildingTypeTableQuery(baseKey);
   }, [baseKey, setBuildingTypeTableQuery]);
 
-  // The page belongs to one query and one page size: a new query (or a new mode) or a new
-  // rows-per-page value starts at page 1 again. Stored together with its key, so there is no
-  // request with a stale page.
+  // A new query starts at page 1; height changes keep the previous first row in view.
+  // The stored key includes its original size for map-selection locate responses.
   const pageKey = `${baseKey}&ps=${pageSize}`;
   const [pageState, setPageState] = useState({ key: '', page: 1 });
-  const page = pageState.key === pageKey ? pageState.page : 1;
+  const page = pageForTableSize(pageState, baseKey, pageSize);
 
   // ----- Fetch the current page ----------------------------------------------
   const [data, setData] = useState<TableResponse | null>(null);
@@ -478,7 +477,7 @@ export default function DataTableBuildingType() {
       </Group>
 
       {/* Table area */}
-      <Box pos="relative" style={{ flex: 1, minHeight: 0 }}>
+      <Box ref={tableRef} pos="relative" style={{ flex: 1, minHeight: 0 }}>
         <Box pos="absolute" inset={0}>
           <DataTable<BuildingTypeRow>
             height="100%"
@@ -516,9 +515,7 @@ export default function DataTableBuildingType() {
             onSortStatusChange={setSortStatus}
             totalRecords={total}
             recordsPerPage={pageSize}
-            recordsPerPageOptions={PAGE_SIZE_OPTIONS}
-            onRecordsPerPageChange={setPageSize}
-            recordsPerPageLabel="Rows per page"
+
             page={page}
             onPageChange={(p) => setPageState({ key: pageKey, page: p })}
             paginationText={({ from, to }) => `${from} - ${to} of ${totalLabel}`}

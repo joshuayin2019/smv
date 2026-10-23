@@ -738,21 +738,33 @@ export default function Map({
 
     const el = containerRef.current;
 
-    let raf = 0;
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    let canvasWidth = el.clientWidth;
+    let canvasHeight = el.clientHeight;
 
     const ro = new ResizeObserver(() => {
-      cancelAnimationFrame(raf);
+      clearTimeout(resizeTimer);
+      const width = el.clientWidth;
+      const height = el.clientHeight;
+      if (!width || !height) return;
+      if (width === canvasWidth && height === canvasHeight) {
+        // A rapidly reversed transition may return to the original buffer size.
+        map.getCanvas().style.width = `${width}px`;
+        map.getCanvas().style.height = `${height}px`;
+        return;
+      }
 
-      raf = requestAnimationFrame(() => {
-        if (
-          el.clientWidth === 0 ||
-          el.clientHeight === 0
-        ) {
-          return;
-        }
-
+      // Stretch the existing frame during CSS transitions instead of reallocating
+      // the WebGL drawing buffer for every intermediate sidebar/splitter width.
+      const canvas = map.getCanvas();
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      resizeTimer = setTimeout(() => {
+        if (!el.clientWidth || !el.clientHeight) return;
+        canvasWidth = el.clientWidth;
+        canvasHeight = el.clientHeight;
         map.resize();
-      });
+      }, 120);
     });
 
     ro.observe(el);
@@ -762,7 +774,7 @@ export default function Map({
     // --------------------------------------------------------
 
     return () => {
-      cancelAnimationFrame(raf);
+      clearTimeout(resizeTimer);
 
       ro.disconnect();
 

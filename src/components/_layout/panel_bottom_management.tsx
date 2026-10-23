@@ -1,3 +1,7 @@
+import BarangayClassLayer from '../pages/demographic/barangay_class/map_barangay_class';
+import DemographicBarangayClassPanel, { DemographicBarangayClassHideTab } from '../pages/demographic/barangay_class/panel_barangay_class';
+import BuildingStoryLayer from '../pages/demographic/number_of_story/map_number_of_story';
+import DemographicBuildingStoryPanel, { DemographicBuildingStoryHideTab } from '../pages/demographic/number_of_story/panel_number_of_story';
 import BuildingTypeLayer from '../pages/demographic/type_of_buildings/map_type_of_buildings';
 import DemographicBuildingTypePanel, { DemographicBuildingTypeHideTab } from '../pages/demographic/type_of_buildings/panel_type_of_buildings';
 import YearBuiltLayer from '../pages/demographic/year_built/map_year_built';
@@ -150,6 +154,12 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
 
 
 
+      case 'Barangay Class':
+        return <DemographicBarangayClassPanel onNormal={showNormal} onFull={showFull} onHide={hidePanel} />;
+
+      case 'Number of Story of Building':
+        return <DemographicBuildingStoryPanel onNormal={showNormal} onFull={showFull} onHide={hidePanel} />;
+
       case 'Type of Buildings':
         return <DemographicBuildingTypePanel onNormal={showNormal} onFull={showFull} onHide={hidePanel} />;
 
@@ -184,6 +194,8 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
       activePage === 'Province' ||
       activePage === 'City / Municipality' ||
       activePage === 'Barangay' ||
+      activePage === 'Barangay Class' ||
+      activePage === 'Number of Story of Building' ||
       activePage === 'Type of Buildings' ||
       activePage === 'Year Built of Buildings' ||
       activePage === 'Population'
@@ -220,8 +232,10 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             <PoiRadius />
 
             <PopulationLayer />
-            {activePage === 'Year Built of Buildings' && <YearBuiltLayer />}
-            {activePage === 'Type of Buildings' && <BuildingTypeLayer />}
+            <YearBuiltLayer />
+            <BuildingTypeLayer />
+            <BuildingStoryLayer />
+            <BarangayClassLayer />
             {/* <PopulationModeTemp /> */}
 
             {/* SMV */}
@@ -256,6 +270,8 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
         {activePage === 'City / Municipality' && <MunicipalityHideTab onShow={showNormal} />}
         {activePage === 'Barangay' && <BarangayHideTab onShow={showNormal} />}
         
+        {activePage === 'Barangay Class' && <DemographicBarangayClassHideTab onShow={showNormal} />}
+        {activePage === 'Number of Story of Building' && <DemographicBuildingStoryHideTab onShow={showNormal} />}
         {activePage === 'Type of Buildings' && <DemographicBuildingTypeHideTab onShow={showNormal} />}
         {activePage === 'Year Built of Buildings' && <DemographicYearBuiltHideTab onShow={showNormal} />}
         {activePage === 'Population' && <DemographicPopulationHideTab onShow={showNormal} />}
