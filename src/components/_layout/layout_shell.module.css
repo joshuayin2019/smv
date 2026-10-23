@@ -1,0 +1,5 @@
+@media (max-width: 47.99em) {
+  .navbar {
+    --app-shell-navbar-width: 80vw;
+  }
+}

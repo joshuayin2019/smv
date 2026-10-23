@@ -1,0 +1,46 @@
+.viewport {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  container-type: inline-size;
+}
+
+.content {
+  width: 100%;
+  min-width: 0;
+}
+
+.content > *,
+.content :global(.mantine-Grid-col),
+.content :global(.mantine-SimpleGrid-root) > *,
+.content :global(.mantine-Paper-root),
+.content :global(.mantine-BarChart-root) {
+  min-width: 0;
+}
+
+.content :global(.mantine-Grid-col) > *,
+.content :global(.mantine-BarChart-root) {
+  max-width: 100%;
+}
+
+.content :global(.mantine-SegmentedControl-root) {
+  max-width: 100%;
+}
+
+.content :global(.mantine-SegmentedControl-label) {
+  white-space: normal;
+}
+
+@container (max-width: 600px) {
+  .content :global(.mantine-Grid-col) {
+    flex-basis: 100%;
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .content :global(.mantine-Button-label) {
+    white-space: normal;
+    text-align: start;
+  }
+}

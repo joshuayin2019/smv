@@ -28,18 +28,20 @@ export default function LayoutMain(_props: { navbarOpened?: boolean }) {
   }, [auth, isAdmin, activePage, setActivePage]);
 
   return (
-    <Box pos="relative" h="calc(100dvh - 50px)" style={{ overflow: 'hidden' }}>
+    <Box pos="relative" h="calc(100dvh - 50px)" style={{ overflow: 'hidden', minWidth: 0, maxWidth: '100%' }}>
       {/* Map stays mounted; only hidden on other pages */}
       <PanelBottomManagement showMap={showMap} />
 
       {/* Content for pages that don't show the map */}
       {!showMap && (
-        <Box pos="absolute" inset={0} p="xs">
+        <Box pos="absolute" inset={0} p="xs" style={{ minWidth: 0 }}>
           <Tabs
+            h="100%"
+            style={{ minWidth: 0 }}
             value={activePage}
             onChange={(value) => value && setActivePage(value)}
           >
-            <Tabs.Panel value="Dashboard">
+            <Tabs.Panel value="Dashboard" h="100%" style={{ minWidth: 0 }}>
               <DashboardMain />
             </Tabs.Panel>
 

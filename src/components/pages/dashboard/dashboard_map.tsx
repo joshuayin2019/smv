@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { Box, Group, SegmentedControl, Text } from '@mantine/core';
+import { Box, Button, Group, Popover, Radio, Stack, Text } from '@mantine/core';
+import { IconStack2 } from '@tabler/icons-react';
 import { useGlobalStore } from '@/stores/global_stores';
 import { basePath } from '@/lib/config';
 
@@ -31,7 +32,7 @@ export default function DashboardMap() {
       map = new maplibregl.Map({ container: container.current,
         style: 'https://tiles.openfreemap.org/styles/bright', bounds: PH_BOUNDS,
         fitBoundsOptions: { padding: 30 }, maxZoom: 16, minZoom: 3,
-        scrollZoom: false, trackResize: false, pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+        scrollZoom: true, trackResize: false, pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
         canvasContextAttributes: { antialias: false }, attributionControl: { compact: true },
       });
     } catch {
@@ -39,7 +40,6 @@ export default function DashboardMap() {
       return;
     }
     mapRef.current = map;
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     map.on('load', () => { setReady(true); setStatus(''); });
     map.on('error', () => setStatus('Some map tiles could not load. Try moving or zooming the map.'));
     map.on('idle', () => setStatus(''));
@@ -108,16 +108,29 @@ export default function DashboardMap() {
   }, [ready, scopeKey]);
 
   return <Box>
-      <Group justify="space-between" gap="xs" mb="sm"><SegmentedControl size="xs" value={mode} onChange={setMode} data={[{ value: 'population', label: 'Population' }, { value: 'barangay_class', label: 'Barangay class' }]} />
-        <Text fz={10} c="dimmed">Hover to inspect · click to explore</Text></Group>
       <Box pos="relative" h={385} style={{ overflow: 'hidden', borderRadius: 10, background: '#eaf0f7' }}>
         <div ref={container} style={{ height: '100%', width: '100%' }} />
-        {(error || status) && <Box pos="absolute" top={10} left={10} maw={250} bg="white" p="xs" style={{ borderRadius: 6 }}><Text size="xs">{error || status}</Text></Box>}
+        <Box pos="absolute" top={10} left={10} style={{ zIndex: 2 }}>
+          <Popover position="bottom-start" shadow="md" width={205}>
+            <Popover.Target><Button size="xs" variant="white" color="#163f78" leftSection={<IconStack2 size={16} />}>Layers</Button></Popover.Target>
+            <Popover.Dropdown>
+              <Text size="xs" fw={700} mb="sm">Map layer</Text>
+              <Radio.Group value={mode} onChange={setMode} aria-label="Dashboard map layer">
+                <Stack gap="sm">
+                  <Radio size="xs" value="population" label="Population" />
+                  <Radio size="xs" value="barangay_class" label={<span style={{ whiteSpace: 'nowrap' }}>Barangay class</span>} />
+                </Stack>
+              </Radio.Group>
+            </Popover.Dropdown>
+          </Popover>
+        </Box>
+        {(error || status) && <Box pos="absolute" top={52} left={10} maw={250} bg="white" p="xs" style={{ borderRadius: 6 }}><Text size="xs">{error || status}</Text></Box>}
         {!scope?.length && <Box pos="absolute" bottom={30} left={12} bg="white" p="xs"><Text size="xs">No demographic scope assigned.</Text></Box>}
         <Box pos="absolute" bottom={26} left={12} p={8} bg="#fffffff0" style={{ borderRadius: 6, pointerEvents: 'none' }}>
           {mode === 'barangay_class' ? <Group gap={8}>{[{ label: 'Urban', color: '#c000db' }, { label: 'Rural', color: '#00c98b' }, { label: 'Unknown', color: '#94a3b8' }].map(item => <Group key={item.label} gap={4}><Box w={8} h={8} bg={item.color} /><Text fz={10}>{item.label}</Text></Group>)}<Text fz={10}>Zoom 8+</Text></Group>
             : <Group gap={7}><Text fz={10}>Lower</Text>{['#ffffcc','#c7e9b4','#7fcdbb','#41b6c4','#2c7fb8','#253494'].map(color => <Box key={color} w={14} h={8} bg={color} />)}<Text fz={10}>Higher population</Text></Group>}
         </Box>
       </Box>
+      <Text fz={10} c="dimmed" mt={8}>Scroll to zoom · drag to pan · hover to inspect</Text>
     </Box>;
 }

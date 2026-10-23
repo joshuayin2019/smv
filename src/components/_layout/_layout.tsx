@@ -5,6 +5,7 @@ import LayoutHeader from './layout_header';
 import LayoutNavbar from './layout_navbar';
 import LayoutMain from './layout_main';
 import MapDataManagement from './map_data_management';
+import styles from './layout_shell.module.css';
 
 export default function LayoutParent() {
   const [mobileOpened, { toggle: toggleMobile }] = useDisclosure();
@@ -33,11 +34,11 @@ export default function LayoutParent() {
         />
       </AppShell.Header>
 
-      <AppShell.Navbar p={0}>
+      <AppShell.Navbar p={0} className={styles.navbar}>
         <LayoutNavbar />
       </AppShell.Navbar>
 
-      <AppShell.Main>
+      <AppShell.Main miw={0} style={{ maxWidth: '100%' }}>
         <LayoutMain navbarOpened={desktopOpened} />
       </AppShell.Main>
     </AppShell>
