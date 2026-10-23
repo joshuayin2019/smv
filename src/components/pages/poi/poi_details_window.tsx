@@ -1,6 +1,7 @@
 // components/map/poi_details_window.tsx  (draggable details window for the POI clicked on the map)
 import { useEffect, useRef, useState } from 'react';
 import {
+  ActionIcon,
   Badge,
   Box,
   Button,
@@ -17,11 +18,14 @@ import {
 import {
   IconArrowsMaximize,
   IconInfoCircle,
+  IconMinus,
+  IconPlus,
   IconRoute,
   IconView360,
 } from '@tabler/icons-react';
 import type * as maplibregl from 'maplibre-gl';
 import { Photosphere, type PhotosphereView } from 'maplibre-gl-photosphere';
+import { createPortal } from 'react-dom';
 import { useGlobalStore } from '@/stores/global_stores';
 import { useMapStore } from '@/stores/map_stores';
 import { usePoiStore, type PoiProperties, type PoiSelection } from '@/stores/poi_stores';
@@ -301,6 +305,7 @@ export default function PoiDetailsWindow() {
   const selected = usePoiStore((s) => s.selectedPoi);
   const setSelected = usePoiStore((s) => s.setSelectedPoi);
   const [tab, setTab] = useState<string>('details');
+  const [minimized, setMinimized] = useState(false);
 
   // ----- route lines (Directions tab) -----
   const drawRoutes = (routes: RouteResult[], selectedIdx: number) => {
@@ -485,23 +490,40 @@ export default function PoiDetailsWindow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
+  // Magnify the panorama instead of letting the wheel move the underlying map.
+  useEffect(() => {
+    if (!map || !inside) return;
+    const canvas = map.getCanvas();
+    const onWheel = (event: WheelEvent) => {
+      if (!insideRef.current) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const units = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? canvas.clientHeight : 1;
+      sphereRef.current?.zoomFov(Math.max(-12, Math.min(12, event.deltaY * units * 0.05)));
+    };
+    canvas.addEventListener('wheel', onWheel, { capture: true, passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel, true);
+  }, [map, inside]);
+
   // only on the POI page, and only after a POI was clicked
   if (activePage !== POI_PAGE || !selected) return null;
 
   // while inside the photosphere the details window is hidden; only an exit button is shown
-  if (inside) {
-    return (
+  if (inside && map) {
+    return createPortal(
       <Button
-        pos="fixed"
-        top={DEFAULT_TOP}
-        right={20}
+        pos="absolute"
+        top={10}
+        right={54}
+        h={34}
         style={{ zIndex: 1000 }}
         color={NAVY}
         leftSection={<IconView360 size={16} />}
         onClick={exitSphere}
       >
         Exit 360° view
-      </Button>
+      </Button>,
+      map.getContainer().parentElement ?? map.getContainer()
     );
   }
 
@@ -525,6 +547,7 @@ export default function PoiDetailsWindow() {
         borderTop: `3px solid ${ACCENT}`,
         display: 'flex',
         flexDirection: 'column',
+        height: minimized ? 37 : undefined,
       }}
     >
       {/* Title bar = drag handle */}
@@ -539,16 +562,30 @@ export default function PoiDetailsWindow() {
         <Text fz={13} fw={700} c="#fff" truncate>
           POI Details
         </Text>
-        <CloseButton
+        <Group gap={2} className="poi-details-close">
+          <ActionIcon
+            size="sm"
+            c="#fff"
+            variant="transparent"
+            aria-label={minimized ? 'Expand POI details' : 'Minimize POI details'}
+            aria-expanded={!minimized}
+            title={minimized ? 'Expand details' : 'Minimize details'}
+            onClick={() => setMinimized((value) => !value)}
+          >
+            {minimized ? <IconPlus size={16} /> : <IconMinus size={16} />}
+          </ActionIcon>
+          <CloseButton
           className="poi-details-close"
           size="sm"
           c="#fff"
           variant="transparent"
           aria-label="Close details"
           onClick={() => setSelected(null)}
-        />
+          />
+        </Group>
       </Group>
 
+      <Box style={{ display: minimized ? 'none' : 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       {/* Tab switcher */}
       <Tabs value={tab} onChange={(v) => setTab(v ?? 'details')} style={{ flexShrink: 0 }}>
         <Tabs.List grow>
@@ -650,6 +687,7 @@ export default function PoiDetailsWindow() {
           <path d="M11 1 1 11M11 5 5 11M11 9 9 11" stroke={NAVY} strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       </FloatingWindow.ResizeHandle>
+      </Box>
     </FloatingWindow>
   );
 }

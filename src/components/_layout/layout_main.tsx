@@ -5,6 +5,7 @@ import { useGlobalStore, DEFAULT_PAGE } from '@/stores/global_stores';
 
 import PanelBottomManagement from './panel_bottom_management';
 import DashboardMain from '../pages/dashboard/dashboard_main';
+import ProfileMain from '../pages/profile/profile_main';
 
 
 const UserManagementMain = dynamic(
@@ -13,7 +14,7 @@ const UserManagementMain = dynamic(
 );
 
 // Pages where the map is hidden
-const HIDE_MAP_PAGES = [DEFAULT_PAGE, 'User Management'];
+const HIDE_MAP_PAGES = [DEFAULT_PAGE, 'User Management', 'Profile'];
 
 // navbarOpened is no longer needed, kept optional so existing callers don't break
 export default function LayoutMain(_props: { navbarOpened?: boolean }) {
@@ -43,6 +44,10 @@ export default function LayoutMain(_props: { navbarOpened?: boolean }) {
           >
             <Tabs.Panel value="Dashboard" h="100%" style={{ minWidth: 0 }}>
               <DashboardMain />
+            </Tabs.Panel>
+
+            <Tabs.Panel value="Profile" h="100%" style={{ minWidth: 0 }}>
+              {activePage === 'Profile' && <ProfileMain />}
             </Tabs.Panel>
 
             {isAdmin && (

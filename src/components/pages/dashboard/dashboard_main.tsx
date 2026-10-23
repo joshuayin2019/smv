@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import dynamic from 'next/dynamic';
 import { Alert, Badge, Box, Button, Grid, Group, Loader, Paper, Progress, RingProgress, SegmentedControl, SimpleGrid, Skeleton, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { BarChart, DonutChart } from '@mantine/charts';
@@ -16,13 +16,38 @@ import styles from './dashboard_responsive.module.css';
 const full = (n: number) => n.toLocaleString('en-PH');
 const compact = (n: number) => new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
 const peso = (n: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 0 }).format(n);
+const vars = (v: Record<string, string | number>) => v as CSSProperties;
+/** Counts up to `value` once on mount, then eases between later values. Only this tiny node re-renders. */
+function CountUp({ value }: { value: number }) {
+  const [shown, setShown] = useState(0);
+  const prev = useRef(0);
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { prev.current = value; setShown(value); return; }
+    const from = prev.current; const start = performance.now(); const duration = 900; let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const v = Math.round(from + (value - from) * (1 - Math.pow(1 - t, 3)));
+      prev.current = v; setShown(v);
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  return <>{full(shown)}</>;
+}
+
+/** Fades its content in when it mounts, i.e. the moment data replaces the skeleton. */
+function Reveal({ children }: { children: ReactNode }) {
+  return <div className={styles.fadeIn} style={{ minWidth: 0 }}>{children}</div>;
+}
+
 const PARCEL_TOTAL = SAMPLE_PARCELS.reduce((sum, item) => sum + item.value, 0);
 const DashboardMap = dynamic(() => import('./dashboard_map'), { ssr: false, loading: () => <Skeleton h={425} radius="md" /> });
 
 /* ---------- shared building blocks ---------- */
 
-function Card({ title, eyebrow, icon: HeaderIcon, iconColor = '#2458bd', action, children }: { title: string; eyebrow?: string; icon?: Icon; iconColor?: string; action?: ReactNode; children: ReactNode }) {
-  return <Paper withBorder radius="lg" p={{ base: 'sm', md: 'lg' }} h="100%" style={{ minWidth: 0, borderColor: BORDER, background: '#fff', display: 'flex', flexDirection: 'column' }}>
+function Card({ title, eyebrow, icon: HeaderIcon, iconColor = '#2458bd', action, lazy = false, reveal, children }: { title: string; eyebrow?: string; icon?: Icon; iconColor?: string; action?: ReactNode; lazy?: boolean; reveal?: number; children: ReactNode }) {
+  return <Paper className={[lazy && styles.lazy, reveal !== undefined && styles.reveal].filter(Boolean).join(' ') || undefined} withBorder radius="lg" p={{ base: 'sm', md: 'lg' }} h="100%" style={{ minWidth: 0, borderColor: BORDER, background: '#fff', display: 'flex', flexDirection: 'column', ...(reveal !== undefined ? vars({ '--i': reveal }) : {}) }}>
     <Group justify="space-between" align="flex-start" mb="lg" gap="xs">
       <Group gap="sm" wrap="nowrap" align="center" style={{ minWidth: 0, flex: '1 1 160px' }}>
         {HeaderIcon && <ThemeIcon size={42} radius="md" variant="gradient" gradient={{ from: iconColor, to: NAVY_DEEP, deg: 135 }}><HeaderIcon size={22} stroke={1.7} /></ThemeIcon>}
@@ -35,7 +60,7 @@ function Card({ title, eyebrow, icon: HeaderIcon, iconColor = '#2458bd', action,
 }
 
 function StatTile({ icon: TileIcon, label, value, hint, color }: { icon: Icon; label: string; value: string; hint?: string; color: string }) {
-  return <Paper radius="md" p="sm" style={{ background: `${color}12`, border: `1px solid ${color}26` }}>
+  return <Paper className={styles.lift} radius="md" p="sm" style={{ background: `${color}12`, border: `1px solid ${color}26` }}>
     <Group gap="xs" wrap="nowrap" align="flex-start">
       <ThemeIcon size={30} radius="md" variant="light" color={color}><TileIcon size={17} /></ThemeIcon>
       <div style={{ minWidth: 0 }}>
@@ -58,16 +83,16 @@ function RankedList({ data, icon: RowIcon, currency = false, share = true, color
     const Ico = i === 0 ? IconTrophy : (iconFor?.(item) ?? RowIcon);
     const pct = share ? (total ? item.value / total * 100 : 0) : item.value / max * 100;
     const top = i === 0;
-    return <Paper key={item.name} radius="md" p="xs" px="sm" style={{ border: `1px solid ${top ? color + '40' : '#eef1f7'}`, background: top ? `${color}0d` : '#fff' }}>
+    return <Paper className={styles.row} key={item.name} radius="md" p="xs" px="sm" style={{ border: `1px solid ${top ? color + '40' : '#eef1f7'}`, background: top ? `${color}0d` : '#fff' }}>
       <Group wrap="nowrap" gap="sm">
-        <ThemeIcon size={32} radius="md" variant={top ? 'filled' : 'light'} color={top ? '#e0a21b' : color} style={top ? { background: 'linear-gradient(135deg,#f7c948,#e0891b)' } : undefined}><Ico size={17} stroke={1.8} /></ThemeIcon>
+        <ThemeIcon className={top ? styles.sheen : undefined} size={32} radius="md" variant={top ? 'filled' : 'light'} color={top ? '#e0a21b' : color} style={top ? { background: 'linear-gradient(135deg,#f7c948,#e0891b)' } : undefined}><Ico size={17} stroke={1.8} /></ThemeIcon>
         <div style={{ flex: 1, minWidth: 0 }}>
           <Group justify="space-between" wrap="nowrap" gap="xs">
             <Text size="xs" fw={600} c="#33415c" truncate>{item.name}</Text>
             <Text size="sm" fw={800} c={NAVY_DEEP} style={{ flexShrink: 0 }}>{currency ? peso(item.value) : full(item.value)}</Text>
           </Group>
           <Group gap="xs" wrap="nowrap" mt={5}>
-            <Progress value={item.value / max * 100} color={item.color ?? (top ? color : color + '88')} size={6} radius="xl" style={{ flex: 1 }} />
+            <Progress classNames={{ section: styles.grow }} value={item.value / max * 100} color={item.color ?? (top ? color : color + '88')} size={6} radius="xl" style={{ flex: 1, ...vars({ '--d': i }) }} />
             {share && <Text fz={10} fw={600} c="dimmed" w={34} ta="right">{pct.toFixed(0)}%</Text>}
           </Group>
         </div>
@@ -95,11 +120,11 @@ function Distribution({ data, totalLabel }: { data: DashboardItem[]; totalLabel:
       <SimpleGrid cols={{ base: 1, xs: 2 }} spacing="sm" style={{ flex: '1 1 240px', minWidth: 0, maxWidth: '100%' }}>
         {data.map(item => {
           const Ico = parcelIcon(item.name); const color = item.color ?? '#2458bd'; const pct = item.value / total * 100;
-          return <Paper key={item.name} radius="md" p="sm" style={{ background: `${color}12`, border: `1px solid ${color}30` }}>
+          return <Paper className={styles.lift} key={item.name} radius="md" p="sm" style={{ background: `${color}12`, border: `1px solid ${color}30` }}>
             <Group gap="xs" wrap="nowrap" mb={8}><ThemeIcon size={30} radius="md" variant="filled" style={{ background: color }}><Ico size={17} stroke={1.8} /></ThemeIcon>
               <Text size="xs" fw={600} c="#33415c" truncate>{item.name}</Text></Group>
             <Group justify="space-between" align="baseline" wrap="nowrap"><Text fz={20} fw={800} c={NAVY_DEEP} lh={1.1}>{full(item.value)}</Text><Text fz={11} fw={700} c={color}>{pct.toFixed(1)}%</Text></Group>
-            <Progress value={pct} size={5} radius="xl" mt={8} styles={{ section: { background: color }, root: { background: `${color}22` } }} />
+            <Progress classNames={{ section: styles.grow }} value={pct} size={5} radius="xl" mt={8} styles={{ section: { background: color }, root: { background: `${color}22` } }} />
           </Paper>;
         })}
       </SimpleGrid>
@@ -107,7 +132,7 @@ function Distribution({ data, totalLabel }: { data: DashboardItem[]; totalLabel:
     <div>
       <Group justify="space-between" mb={6}><Text fz={11} fw={700} c={NAVY_DEEP}>Share of inventory</Text>
         <Text fz={10} c="dimmed">{lead.name} leads with {(lead.value / total * 100).toFixed(1)}%</Text></Group>
-      <Progress.Root size={16} radius="xl">{sorted.map(item => <Progress.Section key={item.name} value={item.value / total * 100} color={item.color ?? '#2458bd'} />)}</Progress.Root>
+      <Progress.Root size={16} radius="xl">{sorted.map((item, i) => <Progress.Section key={item.name} className={styles.grow} style={vars({ '--d': i })} value={item.value / total * 100} color={item.color ?? '#2458bd'} />)}</Progress.Root>
     </div>
   </Stack>;
 }
@@ -154,7 +179,7 @@ export default function DashboardMain() {
   const marketLow = marketSorted[marketSorted.length - 1];
 
   const link = (page: string) => <Button size="compact-xs" variant="subtle" color={NAVY} rightSection={<IconArrowUpRight size={13} />} onClick={() => setPage(page)}>Explore</Button>;
-  const metric = (value: number | undefined, sample = false) => loading && !data && !sample ? <Skeleton h={34} w={110} my={4} /> : <Text fz={32} fw={800} lh={1.4} c={NAVY_DEEP}>{value === undefined ? '—' : full(value)}</Text>;
+  const metric = (value: number | undefined, sample = false) => loading && !data && !sample ? <Skeleton h={34} w={110} my={4} /> : <Text fz={32} fw={800} lh={1.4} c={NAVY_DEEP} style={{ fontVariantNumeric: 'tabular-nums' }}>{value === undefined ? '—' : <CountUp value={value} />}</Text>;
   const unavailable = <Text size="sm" c="dimmed">Data unavailable. Refresh to retry.</Text>;
   const cards = [
     { title: 'Market value records', value: data?.market?.roads, note: 'Road records in the SMV inventory', icon: IconRoute, color: '#2458bd', page: 'Schedule of Market Value' },
@@ -165,7 +190,7 @@ export default function DashboardMain() {
 
   return <Box className={styles.viewport} h="100%" style={{ overflowY: 'auto', background: '#f4f6fb', borderRadius: 12 }}>
     <Stack className={styles.content} gap="lg" p={{ base: 'sm', md: 'lg' }} maw={1600} w="100%" mx="auto">
-      <Paper radius="lg" p={{ base: 'lg', md: 28 }} style={{ background: `linear-gradient(115deg, ${NAVY_DEEP}, #163c88)`, color: '#fff' }}>
+      <Paper className={`${styles.hero} ${styles.reveal}`} radius="lg" p={{ base: 'lg', md: 28 }} style={{ background: `linear-gradient(115deg, ${NAVY_DEEP}, #163c88)`, color: '#fff' }}>
         <Group justify="space-between" align="flex-start" gap="lg">
           <div style={{ minWidth: 0, flex: '1 1 300px' }}><Text fz={10} fw={700} c="#b4caf1" mb={8} style={{ letterSpacing: 2 }}>SMV · AREA OVERVIEW</Text>
             <Title order={2} fz={{ base: 25, md: 31 }} fw={750} mb={8}>Your area, at a glance.</Title>
@@ -180,7 +205,7 @@ export default function DashboardMain() {
       {(error || !!data?.errors.length) && <Alert color="orange" title="Some data could not be refreshed">{error || data?.errors.join('. ')}{data && error ? ' Showing your last loaded figures.' : ''}</Alert>}
 
       <SimpleGrid spacing="md" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))' }}>
-        {cards.map(card => <Paper key={card.title} withBorder radius="lg" p="lg" style={{ borderColor: BORDER }}>
+        {cards.map((card, i) => <Paper key={card.title} className={`${styles.kpi} ${styles.lift} ${styles.reveal}`} withBorder radius="lg" p="lg" style={{ ...vars({ '--i': i + 1, '--accent': card.color }), borderColor: BORDER }}>
           <Group justify="space-between" mb="xs"><ThemeIcon size={36} radius="md" variant="light" color={card.color}><card.icon size={20} stroke={1.6} /></ThemeIcon>
             {card.sample ? <Badge size="xs" color="orange" variant="light">Sample data</Badge> : <Badge size="xs" color="gray" variant="light">Database</Badge>}</Group>
           <Text size="xs" fw={600} c="#61708c">{card.title}</Text>{metric(card.value, card.sample)}
@@ -190,23 +215,23 @@ export default function DashboardMain() {
 
       <Grid gap="lg">
         <Grid.Col span={{ base: 12, lg: 8 }}>
-          <Card eyebrow="Geographic context" title="Explore your assigned area" icon={IconMap2} iconColor="#2458bd">
+          <Card reveal={5} eyebrow="Geographic context" title="Explore your assigned area" icon={IconMap2} iconColor="#2458bd">
             <DashboardMap />
           </Card>
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 4 }}>
-          <Card eyebrow="Places & coverage" title="Top areas by POI" icon={IconMapSearch} iconColor="#0b927c" action={link('Point of Interest')}>
-            {data?.poi ? <RankedList data={data.poi.areas} icon={IconMapPinFilled} color="#0b927c" /> : loading ? <Skeleton h={260} /> : unavailable}
+          <Card reveal={6} eyebrow="Places & coverage" title="Top areas by POI" icon={IconMapSearch} iconColor="#0b927c" action={link('Point of Interest')}>
+            {data?.poi ? <Reveal><RankedList data={data.poi.areas} icon={IconMapPinFilled} color="#0b927c" /></Reveal> : loading ? <Skeleton h={260} /> : unavailable}
             <Paper mt="lg" p="md" radius="md" bg="#f4f6fb"><Text size="xs" fw={700} c={NAVY_DEEP}>Different datasets, different scopes</Text>
-              <Text size="xs" c="dimmed" mt={5}>The map uses your demographic scope. This ranking uses your POI scope.</Text></Paper>
+              <Text size="xs" c="dimmed" mt={5}>The population layer uses your demographic scope. POI clusters and this ranking use your POI scope.</Text></Paper>
           </Card>
         </Grid.Col>
       </Grid>
 
       <Grid gap="lg">
         <Grid.Col span={{ base: 12, lg: 7 }}>
-        <Card eyebrow="Valuation" title="Average market values" icon={IconCash} iconColor="#2458bd" action={link('Schedule of Market Value')}>
-          {data?.market ? <Stack gap="md">
+        <Card lazy eyebrow="Valuation" title="Average market values" icon={IconCash} iconColor="#2458bd" action={link('Schedule of Market Value')}>
+          {data?.market ? <Stack className={styles.fadeIn} gap="md">
             {marketHigh && marketLow && marketSorted.length > 1 && <SimpleGrid cols={{ base: 1, xs: 2 }} spacing="sm">
               <StatTile icon={IconTrendingUp} color="#0b927c" label="Highest average" value={peso(marketHigh.value)} hint={marketHigh.name} />
               <StatTile icon={IconTrendingDown} color="#ce8515" label="Lowest average" value={peso(marketLow.value)} hint={marketLow.name} />
@@ -222,7 +247,7 @@ export default function DashboardMain() {
               <SimpleGrid cols={{ base: 1, xs: 2, md: 3 }} spacing="sm">
                 {yearRows.map((year, i) => {
                   const pct = yearTotal ? year.value / yearTotal * 100 : 0; const color = YEAR_COLORS[i % YEAR_COLORS.length]; const top = year.name === yearTop?.name;
-                  return <Paper key={year.name} radius="md" p="sm" style={{ background: `linear-gradient(135deg, ${color}14, #fff 70%)`, border: `1px solid ${color}33` }}>
+                  return <Paper className={styles.lift} key={year.name} radius="md" p="sm" style={{ background: `linear-gradient(135deg, ${color}14, #fff 70%)`, border: `1px solid ${color}33` }}>
                     <Group gap="sm" wrap="nowrap">
                       <RingProgress size={62} thickness={6} roundCaps sections={[{ value: Math.max(pct, 2), color }]} rootColor={`${color}22`}
                         label={<Text ta="center" fz={11} fw={800} c={color}>{pct.toFixed(0)}%</Text>} />
@@ -241,16 +266,16 @@ export default function DashboardMain() {
         </Card>
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 5 }}>
-        <Card eyebrow="Places" title="Top points of interest categories" icon={IconCategory} iconColor="#0b927c" action={link('Point of Interest')}>
-          {data?.poi ? <><RankedList data={data.poi.categories} icon={IconMapPin} color="#0b927c" /><Text fz={10} c="dimmed" mt="lg">Top six categories by number of mapped places.</Text></> : loading ? <Skeleton h={205} /> : unavailable}
+        <Card lazy eyebrow="Places" title="Top points of interest categories" icon={IconCategory} iconColor="#0b927c" action={link('Point of Interest')}>
+          {data?.poi ? <Reveal><RankedList data={data.poi.categories} icon={IconMapPin} color="#0b927c" /><Text fz={10} c="dimmed" mt="lg">Top six categories by number of mapped places.</Text></Reveal> : loading ? <Skeleton h={205} /> : unavailable}
         </Card>
         </Grid.Col>
       </Grid>
 
       <Grid gap="lg">
         <Grid.Col span={{ base: 12, lg: 5 }}>
-        <Card eyebrow="Communities · PSA 2020" title="Population & barangay class" icon={IconUsers} iconColor="#8a53c4" action={link('Population')}>
-          {demographic ? <Stack gap="lg">
+        <Card lazy eyebrow="Communities · PSA 2020" title="Population & barangay class" icon={IconUsers} iconColor="#8a53c4" action={link('Population')}>
+          {demographic ? <Stack className={styles.fadeIn} gap="lg">
             <SimpleGrid cols={2} spacing="sm">
               <StatTile icon={IconBuildings} color="#2458bd" label="Municipalities" value={full(demographic.municipalities)} />
               <StatTile icon={IconHome2} color="#0b927c" label="Barangays" value={full(demographic.barangays)} />
@@ -275,7 +300,7 @@ export default function DashboardMain() {
         </Card>
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 7 }}>
-        <Card eyebrow="Land inventory" title="Parcels by classification" icon={IconBuildingCommunity} iconColor="#ce8515" action={<Badge color="orange" variant="light" size="sm">Sample data</Badge>}>
+        <Card lazy eyebrow="Land inventory" title="Parcels by classification" icon={IconBuildingCommunity} iconColor="#ce8515" action={<Badge color="orange" variant="light" size="sm">Sample data</Badge>}>
           <Distribution data={SAMPLE_PARCELS} totalLabel="sample parcels" />
           <Text fz={11} c="#8c6c2c" mt="lg" pt="md" style={{ borderTop: '1px dashed #e8d9b8' }}>Illustrative figures only. Parcel records are not connected yet; these numbers do not reflect your geographic scope.</Text>
         </Card>
@@ -284,13 +309,13 @@ export default function DashboardMain() {
 
       <Grid gap="lg">
         <Grid.Col span={{ base: 12, lg: 8 }}>
-        <Card eyebrow="Buildings · PSA 2020" title="Building profile" icon={IconChartBar} iconColor={viewMeta.color} action={link(demographicPage)}>
+        <Card lazy eyebrow="Buildings · PSA 2020" title="Building profile" icon={IconChartBar} iconColor={viewMeta.color} action={link(demographicPage)}>
           <SegmentedControl size="xs" mb="lg" fullWidth value={demographicView} onChange={setDemographicView} data={[
             { value: 'buildings', label: <Group gap={6} justify="center" wrap="nowrap"><IconBuilding size={14} /><span>Building type</span></Group> },
             { value: 'years', label: <Group gap={6} justify="center" wrap="nowrap"><IconCalendarStats size={14} /><span>Year built</span></Group> },
             { value: 'floors', label: <Group gap={6} justify="center" wrap="nowrap"><IconStairs size={14} /><span>Floors</span></Group> },
           ]} />
-          {demographic ? (buildingRows.length ? <Stack gap="md">
+          {demographic ? (buildingRows.length ? <Stack className={styles.fadeIn} gap="md">
             <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="sm">
               <StatTile icon={viewMeta.icon} color={viewMeta.color} label="Total buildings" value={full(buildingTotal)} hint="In listed categories" />
               <StatTile icon={IconTrophy} color="#e0891b" label="Most common" value={buildingTop?.name ?? '—'} hint={buildingTop ? `${full(buildingTop.value)} · ${(buildingTotal ? buildingTop.value / buildingTotal * 100 : 0).toFixed(1)}%` : undefined} />
@@ -315,7 +340,7 @@ export default function DashboardMain() {
         </Card>
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 4 }}>
-        <Card eyebrow="Keep exploring" title="Open a demographic view" icon={IconMapSearch} iconColor="#2458bd">
+        <Card lazy eyebrow="Keep exploring" title="Open a demographic view" icon={IconMapSearch} iconColor="#2458bd">
           <Stack gap="xs">
             {[['Population', IconUsers], ['Barangay Class', IconHome2], ['Type of Buildings', IconBuilding], ['Year Built of Buildings', IconCalendarStats], ['Number of Story of Building', IconStairs]].map(([page, Ico]) => {
               const I = Ico as Icon;

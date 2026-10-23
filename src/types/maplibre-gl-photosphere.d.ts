@@ -22,5 +22,6 @@ declare module 'maplibre-gl-photosphere' {
     constructor(map: Map, options: PhotosphereOptions);
     enter(): void;
     exit(): void;
+    zoomFov(deltaDeg: number): void;
   }
 }
