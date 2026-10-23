@@ -1,3 +1,5 @@
+import YearBuiltLayer from '../pages/demographic/year_built/map_year_built';
+import DemographicYearBuiltPanel, { DemographicYearBuiltHideTab } from '../pages/demographic/year_built/panel_year_built';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import dynamic from 'next/dynamic';
 import { Box, Splitter, Title, type SplitterProps } from '@mantine/core';
@@ -146,6 +148,9 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
 
 
 
+      case 'Year Built of Buildings':
+        return <DemographicYearBuiltPanel onNormal={showNormal} onFull={showFull} onHide={hidePanel} />;
+
       case 'Population':
         return (
           <DemographicPopulationPanel
@@ -174,6 +179,7 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
       activePage === 'Province' ||
       activePage === 'City / Municipality' ||
       activePage === 'Barangay' ||
+      activePage === 'Year Built of Buildings' ||
       activePage === 'Population'
     ) {
       setSizes(SIZES_NORMAL);
@@ -208,6 +214,7 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             <PoiRadius />
 
             <PopulationLayer />
+            {activePage === 'Year Built of Buildings' && <YearBuiltLayer />}
             {/* <PopulationModeTemp /> */}
 
             {/* SMV */}
@@ -242,6 +249,7 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
         {activePage === 'City / Municipality' && <MunicipalityHideTab onShow={showNormal} />}
         {activePage === 'Barangay' && <BarangayHideTab onShow={showNormal} />}
         
+        {activePage === 'Year Built of Buildings' && <DemographicYearBuiltHideTab onShow={showNormal} />}
         {activePage === 'Population' && <DemographicPopulationHideTab onShow={showNormal} />}
         </>
       )}
