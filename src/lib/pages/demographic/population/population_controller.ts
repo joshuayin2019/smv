@@ -1,4 +1,3 @@
-// FILE: src/lib/pages/population/population_controller.ts
 import { conn } from "@/lib/db";
 import type { Scope } from "@/stores/global_stores";
 
@@ -17,7 +16,7 @@ const LEVEL_COLUMN: Record<number, string> = {
 };
 
 // Returns null when the scope grants no access.
-function buildScopeFilter(scopes: Scope[], firstParam: number) {
+export function buildScopeFilter(scopes: Scope[], firstParam: number) {
   if (!Array.isArray(scopes) || scopes.length === 0) return null;
 
   if (scopes.some((s) => s.scope_level === 1)) {
@@ -187,6 +186,26 @@ export async function loadPopulationMap(
 /* ---------------- One area (region, province, municipality or barangay) ---------------- */
 
 const validCode = (code: string) => /^[A-Za-z0-9_-]{1,32}$/.test(code);
+
+// Full population coverage in the user's scope, independent of the current viewport.
+export async function loadPopulationScopeExtent(scope: Scope[]) {
+  try {
+    const filter = buildScopeFilter(scope, 1);
+    if (!filter) return { success: true, status: 200, data: null };
+    const { rows } = await conn.query(
+      `SELECT CASE WHEN bx IS NULL THEN NULL
+              ELSE ARRAY[ST_XMin(bx), ST_YMin(bx), ST_XMax(bx), ST_YMax(bx)]::float8[] END AS bbox
+       FROM (SELECT ST_Extent(b.geom) AS bx
+             FROM data.psa_2020_municipalities b
+             WHERE TRUE${filter.sql}) s`,
+      filter.params
+    );
+    return { success: true, status: 200, data: rows[0]?.bbox ?? null };
+  } catch (error) {
+    console.warn("population scope extent:", error);
+    return { success: false, status: 500, message: "Internal server error" };
+  }
+}
 
 export async function loadPopulationById(level: string, code: string, scope: Scope[]) {
   try {

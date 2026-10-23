@@ -9,6 +9,7 @@ import {
 } from '@tabler/icons-react';
 import type { UseSplitterReturnValue } from '@mantine/hooks';
 import DataTablePopulation from './datatable_population';
+import SummaryPopulation from './summary_population';
 
 import { ACCENT, BORDER, NAVY, NAVY_DEEP, PANEL_BG } from '@/lib/theme_colors';
 
@@ -105,7 +106,7 @@ export default function DemographicPopulationPanel({ onNormal, onFull, onHide }:
             bg={PANEL_BG}
             style={{ color: NAVY }}
           >
-         
+            <SummaryPopulation active={!summaryCollapsed} />
           </Splitter.Pane>
 
           <Splitter.Pane defaultSize={60} min={30} bd={`1px solid ${BORDER}`}>

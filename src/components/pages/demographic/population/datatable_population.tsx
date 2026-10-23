@@ -1,4 +1,3 @@
-// FILE: src/components/.../datatable_population.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActionIcon,
@@ -185,6 +184,9 @@ export default function DataTablePopulation() {
   const selected = usePopulationStore((s) => s.selectedPopulation);
   const setSelectedPopulation = usePopulationStore((s) => s.setSelectedPopulation);
 
+  // the query of this table is shared with the summary panel
+  const setPopulationTableQuery = usePopulationStore((s) => s.setPopulationTableQuery);
+
   // user scope, sent to the server in the querystring
   const scopePsa = useGlobalStore((s) => s.auth?.scope_psa);
   const scopeKey = JSON.stringify(scopePsa ?? []);
@@ -246,6 +248,11 @@ export default function DataTablePopulation() {
       }),
     [scopeKey, mode, debouncedSearch, debouncedFilters, debouncedNumFilter, sortStatus]
   );
+
+  // Share the query with the summary panel (it drops sort/dir itself)
+  useEffect(() => {
+    setPopulationTableQuery(baseKey);
+  }, [baseKey, setPopulationTableQuery]);
 
   // The page belongs to one query and one page size: a new query (or a new mode) or a new
   // rows-per-page value starts at page 1 again. Stored together with its key, so there is no
@@ -319,12 +326,13 @@ export default function DataTablePopulation() {
     return () => ctrl.abort();
   }, [selectedCode]);
 
-  // When the table goes away: drop the selection
+  // When the table goes away: drop the selection and the shared query
   useEffect(
     () => () => {
       setSelectedPopulation(null);
+      setPopulationTableQuery(null);
     },
-    [setSelectedPopulation]
+    [setSelectedPopulation, setPopulationTableQuery]
   );
 
   // ----- Columns (only the ones that exist in the current mode) ---------------

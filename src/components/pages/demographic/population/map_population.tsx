@@ -153,9 +153,59 @@ export default function PopulationLayer({ visible = true, opacity = 1 }: Props) 
 
   const mode = usePopulationStore((s) => s.populationMode);
   const selectedCode = usePopulationStore((s) => s.selectedPopulation?.code ?? null);
+  const selectedLevel = usePopulationStore((s) => s.selectedPopulation?.level ?? null);
 
   // Shown only on the Population page (and when the visible prop is on)
   const show = visible && activePage === PAGE_NAME;
+
+  // Fit the user's complete coverage each time the Population page is opened.
+  useEffect(() => {
+    if (!map || activePage !== PAGE_NAME || !scopePsa?.length) return;
+    const ctrl = new AbortController();
+    const sp = new URLSearchParams({ scope: scopeKey });
+    fetch(`${basePath}/api/pages/demographic/population/extent?${sp}`, { signal: ctrl.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Population extent failed (${res.status})`);
+        return res.json() as Promise<number[] | null>;
+      })
+      .then((bbox) => {
+        if (ctrl.signal.aborted || !bbox || bbox.length !== 4 || !bbox.every(Number.isFinite)) return;
+        if (usePopulationStore.getState().selectedPopulation) return;
+        map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], {
+          padding: 60,
+          maxZoom: 14,
+          duration: 900,
+        });
+      })
+      .catch((error: Error) => {
+        if (error.name !== "AbortError") console.warn("Population extent:", error);
+      });
+    return () => { ctrl.abort(); };
+  }, [map, activePage, scopeKey]);
+
+  // Table and map clicks share the same selection, so both fit the full area boundary.
+  useEffect(() => {
+    if (!map || !show || !selectedCode || selectedLevel !== mode || !scopePsa?.length) return;
+    const ctrl = new AbortController();
+    const sp = new URLSearchParams({ scope: scopeKey, level: mode, code: selectedCode });
+    fetch(`${basePath}/api/pages/demographic/population/extent?${sp}`, { signal: ctrl.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Population extent failed (${res.status})`);
+        return res.json() as Promise<number[] | null>;
+      })
+      .then((bbox) => {
+        if (ctrl.signal.aborted || !bbox || bbox.length !== 4 || !bbox.every(Number.isFinite)) return;
+        map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], {
+          padding: 60,
+          maxZoom: 16,
+          duration: 900,
+        });
+      })
+      .catch((error: Error) => {
+        if (error.name !== "AbortError") console.warn("Population selection extent:", error);
+      });
+    return () => { ctrl.abort(); };
+  }, [map, show, mode, selectedCode, selectedLevel, scopeKey]);
 
   // 1) Build the source + layers for the current mode and scope from scratch.
   //    A new mode or scope removes everything (cleanup) and builds it again, so no old tiles stay around.
@@ -246,8 +296,12 @@ export default function PopulationLayer({ visible = true, opacity = 1 }: Props) 
 
     const onClick = (e: maplibregl.MapMouseEvent) => {
       if (useGlobalStore.getState().activePage !== PAGE_NAME) return; // other pages: ignore
+      if (!map.getLayer(FILL_ID) || map.getLayoutProperty(FILL_ID, "visibility") === "none") return;
       const f = map.queryRenderedFeatures(e.point, { layers: [FILL_ID] })[0];
-      if (!f) return; // do not clear here: other layers (SMV, POI) also use map clicks
+      if (!f) {
+        usePopulationStore.getState().setSelectedPopulation(null);
+        return;
+      }
       usePopulationStore.getState().setSelectedPopulation({
         ...(f.properties as unknown as PopulationRecord),
         level: usePopulationStore.getState().populationMode,

@@ -1,4 +1,4 @@
-"use client";
+
 
 // components/map/map.tsx
 
@@ -20,7 +20,7 @@ import MapWalk from "./map_walk";
 // MapLibre worker configuration
 // ------------------------------------------------------------
 
-const WORKER_COUNT = 8;
+const WORKER_COUNT = 4;
 
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
 maplibregl.setWorkerCount(WORKER_COUNT);
@@ -867,24 +867,7 @@ export default function Map({
         />
       )}
 
-      {/* Existing zoom indicator */}
-      <div
-        style={{
-          position: "absolute",
-          left: 10,
-          bottom: 10,
-          padding: "2px 8px",
-          borderRadius: 4,
-          background: "rgba(0, 0, 0, 0.65)",
-          color: "#fff",
-          fontSize: 12,
-          fontFamily: "monospace",
-          pointerEvents: "none",
-          zIndex: 1,
-        }}
-      >
-        Zoom: {zoom}
-      </div>
+
     </div>
   );
 }
