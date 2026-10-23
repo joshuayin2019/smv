@@ -37,6 +37,8 @@ import { BarangayHideTab } from '../pages/boundary/barangay/panel_barangay';
 
 import PopulationLayer from '../pages/demographic/population/map_population';
 import PopulationModeTemp from '../pages/demographic/population/population_mode_temp';
+import DemographicPopulationPanel from '../pages/demographic/population/panel_population';
+import { DemographicPopulationHideTab } from '../pages/demographic/population/panel_population';
 
 const Map = dynamic(() => import('@/components/map/map'), { ssr: false });
 
@@ -140,6 +142,18 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             onHide={hidePanel}
           />
       );
+
+
+
+
+      case 'Population':
+        return (
+          <DemographicPopulationPanel
+            onNormal={showNormal}
+            onFull={showFull}
+            onHide={hidePanel}
+          />
+      );
       
 
       
@@ -153,22 +167,19 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
   };
 
   useEffect(() => {
-    if (activePage === 'Point of Interest') {
+    if (
+      activePage === 'Point of Interest' ||
+      activePage === 'Schedule of Market Value' ||
+      activePage === 'Region' ||
+      activePage === 'Province' ||
+      activePage === 'City / Municipality' ||
+      activePage === 'Barangay' ||
+      activePage === 'Population'
+    ) {
       setSizes(SIZES_NORMAL);
-    } else if(activePage === 'Schedule of Market Value'){
-      setSizes(SIZES_NORMAL);
-    } else if(activePage === 'Population'){
+    } else {
       setSizes(SIZES_HIDDEN);
-    } else if(activePage === 'Region'){
-      setSizes(SIZES_NORMAL);
-    } else if(activePage === 'Province'){
-      setSizes(SIZES_NORMAL);
-    } else if(activePage === 'City / Municipality'){
-      setSizes(SIZES_NORMAL);
-    } else if(activePage === 'Barangay'){
-      setSizes(SIZES_NORMAL);
     }
-    
   }, [activePage]);
 
   return (
@@ -197,7 +208,7 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             <PoiRadius />
 
             <PopulationLayer />
-            <PopulationModeTemp />
+            {/* <PopulationModeTemp /> */}
 
             {/* SMV */}
             <SmvLayer {...smv} />
@@ -231,6 +242,7 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
         {activePage === 'City / Municipality' && <MunicipalityHideTab onShow={showNormal} />}
         {activePage === 'Barangay' && <BarangayHideTab onShow={showNormal} />}
         
+        {activePage === 'Population' && <DemographicPopulationHideTab onShow={showNormal} />}
         </>
       )}
     </Box>
