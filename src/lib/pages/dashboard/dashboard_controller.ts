@@ -37,18 +37,19 @@ async function poi(scopes: DashboardScopes['poi']): Promise<NonNullable<Dashboar
   const q = parsePoi(new URLSearchParams({ scope: JSON.stringify(scopes) }));
   if (q.denied) return { total: 0, categories: [], areas: [] };
   const { rows } = await conn.query(`WITH filtered AS MATERIALIZED (
-    SELECT COALESCE(NULLIF(BTRIM(z.name), ''), 'Unspecified') AS category,
+    SELECT x.category_id::text AS category_id,
+           COALESCE(NULLIF(BTRIM(z.name), ''), 'Unspecified') AS category,
            COALESCE(NULLIF(BTRIM(x.mun_name), ''), 'Unspecified') AS area
     ${POI_FROM} ${q.whereSql}
   ) SELECT COUNT(*) AS total,
     COALESCE((SELECT json_agg(c ORDER BY c.value DESC, c.name) FROM (
-      SELECT category AS name, COUNT(*) AS value FROM filtered GROUP BY category ORDER BY value DESC, name LIMIT 6
+      SELECT category AS name, MIN(category_id) AS "categoryId", COUNT(*) AS value FROM filtered GROUP BY category ORDER BY value DESC, name LIMIT 6
     ) c), '[]'::json) AS categories,
     COALESCE((SELECT json_agg(a ORDER BY a.value DESC, a.name) FROM (
       SELECT area AS name, COUNT(*) AS value FROM filtered GROUP BY area ORDER BY value DESC, name LIMIT 5
     ) a), '[]'::json) AS areas FROM filtered`, q.params);
   const row = rows[0] ?? {};
-  return { total: number(row.total), categories: items(row.categories ?? []), areas: items(row.areas ?? []) };
+  return { total: number(row.total), categories: (row.categories ?? []).map((r: DashboardItem) => ({ name: r.name, value: number(r.value), categoryId: r.categoryId })), areas: items(row.areas ?? []) };
 }
 
 async function demographic(scopes: DashboardScopes['psa']): Promise<NonNullable<DashboardData['demographic']>> {

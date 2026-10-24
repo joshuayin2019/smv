@@ -73,8 +73,16 @@ function StatTile({ icon: TileIcon, label, value, hint, color }: { icon: Icon; l
 }
 
 /** Ranked rows with medal on #1, per-row icon, share bar. */
-function RankedList({ data, icon: RowIcon, currency = false, share = true, color = '#2458bd', iconFor }: {
-  data: DashboardItem[]; icon: Icon; currency?: boolean; share?: boolean; color?: string; iconFor?: (item: DashboardItem) => Icon;
+function PoiCategoryIcon({ categoryId }: { categoryId?: string }) {
+  const src = categoryId ? `${basePath}/api/pages/poi/category-icons/${encodeURIComponent(categoryId)}` : undefined;
+  const [failedSrc, setFailedSrc] = useState<string>();
+  return src && failedSrc !== src
+    ? <img src={src} width={24} height={24} alt="" style={{ objectFit: 'contain' }} onError={() => setFailedSrc(src)} />
+    : <IconMapPin size={17} stroke={1.8} />;
+}
+
+function RankedList({ data, icon: RowIcon, currency = false, share = true, color = '#2458bd', iconFor, poiIcons = false }: {
+  data: DashboardItem[]; icon: Icon; currency?: boolean; share?: boolean; color?: string; iconFor?: (item: DashboardItem) => Icon; poiIcons?: boolean;
 }) {
   if (!data.length) return <Text size="sm" c="dimmed" py="xl">No records in your assigned scope.</Text>;
   const total = data.reduce((s, i) => s + i.value, 0);
@@ -85,7 +93,7 @@ function RankedList({ data, icon: RowIcon, currency = false, share = true, color
     const top = i === 0;
     return <Paper className={styles.row} key={item.name} radius="md" p="xs" px="sm" style={{ border: `1px solid ${top ? color + '40' : '#eef1f7'}`, background: top ? `${color}0d` : '#fff' }}>
       <Group wrap="nowrap" gap="sm">
-        <ThemeIcon className={top ? styles.sheen : undefined} size={32} radius="md" variant={top ? 'filled' : 'light'} color={top ? '#e0a21b' : color} style={top ? { background: 'linear-gradient(135deg,#f7c948,#e0891b)' } : undefined}><Ico size={17} stroke={1.8} /></ThemeIcon>
+        <ThemeIcon className={top && !poiIcons ? styles.sheen : undefined} size={32} radius="md" variant={top && !poiIcons ? 'filled' : 'light'} color={top && !poiIcons ? '#e0a21b' : color} style={top && !poiIcons ? { background: 'linear-gradient(135deg,#f7c948,#e0891b)' } : undefined}>{poiIcons ? <PoiCategoryIcon categoryId={item.categoryId} /> : <Ico size={17} stroke={1.8} />}</ThemeIcon>
         <div style={{ flex: 1, minWidth: 0 }}>
           <Group justify="space-between" wrap="nowrap" gap="xs">
             <Text size="xs" fw={600} c="#33415c" truncate>{item.name}</Text>
@@ -267,7 +275,7 @@ export default function DashboardMain() {
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 5 }}>
         <Card lazy eyebrow="Places" title="Top points of interest categories" icon={IconCategory} iconColor="#0b927c" action={link('Point of Interest')}>
-          {data?.poi ? <Reveal><RankedList data={data.poi.categories} icon={IconMapPin} color="#0b927c" /><Text fz={10} c="dimmed" mt="lg">Top six categories by number of mapped places.</Text></Reveal> : loading ? <Skeleton h={205} /> : unavailable}
+          {data?.poi ? <Reveal><RankedList data={data.poi.categories} icon={IconMapPin} color="#0b927c" poiIcons /><Text fz={10} c="dimmed" mt="lg">Top six categories by number of mapped places.</Text></Reveal> : loading ? <Skeleton h={205} /> : unavailable}
         </Card>
         </Grid.Col>
       </Grid>

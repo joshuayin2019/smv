@@ -1,7 +1,7 @@
 import type { Scope } from '@/stores/global_stores';
 
 export type DashboardScopes = { smv: Scope[]; poi: Scope[]; psa: Scope[] };
-export type DashboardItem = { name: string; value: number; color?: string };
+export type DashboardItem = { name: string; value: number; color?: string; categoryId?: string };
 export type DashboardData = {
   generatedAt: string;
   market: { roads: number; averages: DashboardItem[]; years: DashboardItem[] } | null;
