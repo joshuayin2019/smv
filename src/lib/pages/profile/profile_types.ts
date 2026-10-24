@@ -21,6 +21,7 @@ export interface ProfileScope {
   poi: boolean;
   smv: boolean;
   psa: boolean;
+  parcel: boolean;
 }
 
 export interface ProfileData {

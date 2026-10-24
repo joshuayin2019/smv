@@ -30,7 +30,8 @@ const USER_SQL = `
   SELECT x.*,
     ${scopeAgg("poi", "scope_poi")},
     ${scopeAgg("psa", "scope_psa")},
-    ${scopeAgg("smv", "scope_smv")}
+    ${scopeAgg("smv", "scope_smv")},
+    ${scopeAgg("parcel", "scope_parcel")}
   FROM data.users x
   INNER JOIN data.scope y ON x.user_id = y.user_id
   WHERE x.username = $1
@@ -46,6 +47,7 @@ const adminUser = (username: string): Auth => ({
   scope_poi: ADMIN_SCOPE,
   scope_smv: ADMIN_SCOPE,
   scope_psa: ADMIN_SCOPE,
+  scope_parcel: ADMIN_SCOPE,
 });
 
 const toAuth = (row: any): Auth => ({
@@ -57,6 +59,7 @@ const toAuth = (row: any): Auth => ({
   scope_poi: row.scope_poi,
   scope_smv: row.scope_smv,
   scope_psa: row.scope_psa,
+  scope_parcel: row.scope_parcel,
 });
 
 const invalid = (): LoginResult => ({

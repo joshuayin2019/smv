@@ -32,7 +32,8 @@ function ScopeCard({ scope }: { scope: ProfileScope }) {
           {scope.smv && <Badge size="xs" variant="light" color="blue">Market value</Badge>}
           {scope.poi && <Badge size="xs" variant="light" color="teal">POI</Badge>}
           {scope.psa && <Badge size="xs" variant="light" color="violet">Demographics</Badge>}
-          {!scope.smv && !scope.poi && !scope.psa && <Badge size="xs" color="gray">No modules</Badge>}
+          {scope.parcel && <Badge size="xs" variant="light" color="orange">Parcels</Badge>}
+          {!scope.smv && !scope.poi && !scope.psa && !scope.parcel && <Badge size="xs" color="gray">No modules</Badge>}
         </Group>
       </Group>
       {scope.scope_level === 1 ? <Text size="sm" c="dimmed">Nationwide coverage</Text> : (

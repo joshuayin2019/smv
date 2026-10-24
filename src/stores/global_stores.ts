@@ -14,6 +14,7 @@ export interface Auth {
   scope_poi: Scope[];
   scope_smv: Scope[];
   scope_psa: Scope[];
+  scope_parcel: Scope[];
 }
 
 export const DEFAULT_PAGE = "Dashboard";

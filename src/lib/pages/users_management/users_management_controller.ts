@@ -78,13 +78,14 @@ export async function createUser(
     const poi = modules.includes("POI");
     const smv = modules.includes("SMV");
     const psa = modules.includes("PSA");
+    const parcel = modules.includes("Parcel");
 
     for (const s of scopes) {
       await client.query(
         `INSERT INTO data.scope
-           (user_id, scope_level, reg_code, pro_code, mun_code, poi, smv, psa)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [userId, SCOPE_LEVEL[s.scope_level], s.reg_code, s.pro_code, s.mun_code, poi, smv, psa]
+           (user_id, scope_level, reg_code, pro_code, mun_code, poi, smv, psa, parcel)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [userId, SCOPE_LEVEL[s.scope_level], s.reg_code, s.pro_code, s.mun_code, poi, smv, psa, parcel]
       );
     }
 
@@ -140,7 +141,15 @@ export async function loadUsers(){
                         ELSE NULL
                     END
                 )
-                ) FILTER (WHERE b.smv = true) AS scope_smv
+                ) FILTER (WHERE b.smv = true) AS scope_smv,
+                json_agg(json_build_object(
+                    'scope_level', b.scope_level,
+                    'code', CASE b.scope_level
+                        WHEN 2 THEN b.reg_code
+                        WHEN 3 THEN b.pro_code
+                        WHEN 4 THEN b.mun_code
+                        ELSE NULL END
+                )) FILTER (WHERE b.parcel = true) AS scope_parcel
 
                 FROM data.users a
                 INNER JOIN data.scope b on a.user_id = b.user_id
@@ -178,6 +187,7 @@ export interface ScopeInput {
   poi: boolean;
   smv: boolean;
   psa: boolean;
+  parcel: boolean;
 }
 
 /* turns a Postgres unique-violation into { error, field } (or null if it's something else) */
@@ -239,7 +249,7 @@ export async function loadUserScopes(id: number) {
             CASE WHEN s.scope_level >= 2 THEN COALESCE(s.reg_code, n.reg_code) END AS reg_code,
             CASE WHEN s.scope_level >= 3 THEN COALESCE(s.pro_code, n.pro_code) END AS pro_code,
             CASE WHEN s.scope_level >= 4 THEN COALESCE(s.mun_code, n.mun_code) END AS mun_code,
-            s.poi, s.smv, s.psa,
+            s.poi, s.smv, s.psa, s.parcel,
             n.reg_name, n.pro_name, n.mun_name
        FROM data.scope s
        LEFT JOIN LATERAL (
@@ -279,9 +289,9 @@ export async function replaceUserScopes(id: number, scopes: ScopeInput[]) {
     for (const s of scopes) {
       await client.query(
         `INSERT INTO data.scope
-           (user_id, scope_level, reg_code, pro_code, mun_code, poi, smv, psa)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [userId, s.scope_level, s.reg_code, s.pro_code, s.mun_code, s.poi, s.smv, s.psa]
+           (user_id, scope_level, reg_code, pro_code, mun_code, poi, smv, psa, parcel)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [userId, s.scope_level, s.reg_code, s.pro_code, s.mun_code, s.poi, s.smv, s.psa, s.parcel]
       );
     }
 

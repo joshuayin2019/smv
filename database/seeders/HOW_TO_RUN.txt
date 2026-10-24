@@ -1,0 +1,54 @@
+HOW TO RUN THE NCR PARCEL SEEDER
+
+Run from your project root in PowerShell.
+
+1. Stop any running seeder.
+2. To replace the old large synthetic samples, execute in PostgreSQL:
+
+   DELETE FROM data.parcel
+   WHERE source IN ('synthetic-ncr-parcels-v1', 'synthetic-ncr-parcels-v2')
+     AND parcel_id LIKE 'SYN-NCR-%';
+
+   This deletes old synthetic samples only. Keep the parcel table.
+   Skip if no old samples exist or you are resuming a v3 run.
+
+3. Preview without inserting:
+
+   node database/seeders/parcel_id.cjs --database smv_orig --preview
+
+4. Generate 20 compact parcels per NCR barangay:
+
+   node database/seeders/parcel_id.cjs --database smv_orig
+
+OPTIONAL: increase road centreline clearance (default 12 metres):
+
+   node database/seeders/parcel_id.cjs --database smv_orig --road-clearance 15
+
+Replace smv_orig with your target database. Existing .env supplies PGSQL_HOST,
+PGSQL_PORT, PGSQL_USER, PGSQL_PASSWORD. PGSQL_DATABASE is not used.
+Install project dependencies with npm.cmd install if needed.
+
+REQUIREMENTS
+- data.parcel created with 002_create_parcel.sql
+- core.brgy_bndry with valid populated NCR boundaries
+- data.smv with mapped road geometry
+- PostGIS 3 or newer
+
+SHAPES
+Rectangles: 8-14 m wide, 8-18 m long, 64-252 square metres.
+Five each of Residential, Commercial, Agricultural, Industrial by default.
+These are building-sized synthetic samples. Actual building footprints are
+not available in this database, so shapes do not match real buildings.
+The script avoids mapped roads with an assumed clearance. Missing roads
+cannot be excluded even if visible on the basemap.
+
+RESUMING
+Each barangay saves independently. Matching seed IDs are verified and skipped.
+Source is synthetic-ncr-parcels-v3; IDs start SYN-NCR-.
+Keep count and clearance unchanged when resuming. To change settings,
+deliberately delete v3 seed records first and regenerate.
+Insufficient suitable space rolls back and retries up to eight candidate seeds.
+Retries increase candidate density. From attempt 3, rectangles use 8 x 8 metres
+(64 square metres) to fit crowded areas without reducing road clearance.
+Persistent failures stop instead of saving invalid or overlapping parcels.
+No records are deleted automatically.

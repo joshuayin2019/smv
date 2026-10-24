@@ -1,0 +1,62 @@
+HOW TO RUN DATABASE MIGRATIONS
+
+Run these commands in PowerShell from the project root:
+C:\Users\ACER\Desktop\Pasco\smv
+
+1. Check migration files without connecting to the database:
+
+   node database/migrate.cjs --check
+
+2. Create a NEW empty database and apply all migrations:
+
+   node database/migrate.cjs --database smv_new --create
+
+3. Apply pending migrations to a database already managed by this runner:
+
+   node database/migrate.cjs --database smv_new
+
+Replace smv_new with your target database name.
+Connection credentials come from the project's .env:
+PGSQL_HOST, PGSQL_PORT, PGSQL_USER, PGSQL_PASSWORD.
+The --database option selects the target; PGSQL_DATABASE is not used.
+
+MIGRATION FILES
+
+001_initial_schema.sql creates the original database structure, including the
+parcel boolean flag on data.scope (DEFAULT true, like poi, smv and psa).
+002_create_parcel.sql creates data.parcel with geom, generated geom_3857,
+and spatial indexes for both geometry columns.
+If you already added parcel to data.scope manually, no further SQL is needed
+for that column. Do not run 001 against your existing populated database.
+Files run in numeric filename order. Completed migrations are tracked in
+smv_migrations.history and skipped on later runs.
+No application records are inserted by these migrations.
+
+REQUIREMENTS AND EXISTING DATABASES
+
+Install the project's dependencies first: npm.cmd install
+The PostgreSQL server needs PostGIS and pg_trgm available.
+The database user needs permission to create schemas and extensions, plus
+CREATEDB permission when using --create.
+
+The initial migration requires an empty database. Do not run the full migration
+runner against your existing smv_orig database if it already has these tables.
+If you created data.parcel manually, do not apply 002 again to that database.
+Manual SQL execution is not recorded in migration history.
+
+To recreate a manually created parcel table with the updated 002:
+1. Stop the parcel seeder.
+2. Run DROP TABLE data.parcel; only if all parcel records can be discarded.
+3. Run the full contents of 002_create_parcel.sql in the query editor.
+4. Rerun the parcel seeder if you want synthetic records again.
+PostgreSQL automatically fills geom_3857 when geom is inserted or updated.
+
+If the old 002 was applied through the migration runner, dropping the table
+alone does not clear its history. After deliberately dropping the table, run:
+DELETE FROM smv_migrations.history WHERE name = '002_create_parcel.sql';
+Then rerun the migration runner against that managed database.
+Skip this history step for manually created tables without migration history.
+
+Keep applied migration files unchanged; add a new numbered SQL file for changes.
+If a migration fails, that migration rolls back. Earlier completed migrations
+remain applied.

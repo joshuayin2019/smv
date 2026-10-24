@@ -26,6 +26,7 @@ import { useGlobalStore } from "@/stores/global_stores";
 import { ACCENT, BORDER, NAVY, NAVY_DEEP } from "@/lib/theme_colors";
 import { setBasemap, type Basemap } from "@/lib/basemap";
 import { ZONALS, MIN_ZOOM, overviewColor } from "@/components/pages/smv/map_smv"; // adjust path
+import { PARCEL_CLASSES } from '@/lib/pages/parcel/parcel_types';
 
 // Zoom from which each boundary is drawn (keep in sync with MIN_ZOOM in its layer file)
 const BOUNDARY_MIN_ZOOM: Partial<Record<BoundaryType, number>> = {
@@ -53,6 +54,7 @@ const BODY_MAX_HEIGHT = "calc(100vh - 120px)";
 export default function LayerControl() {
   const [opened, setOpened] = useState(false); // whole panel
   const [smvOpen, setSmvOpen] = useState(false); // SMV section true
+  const [parcelOpen, setParcelOpen] = useState(false);
   const [boundaryOpen, setBoundaryOpen] = useState(false); // Boundary section
   const [basemap, setBasemapState] = useState<Basemap>("streets");
 
@@ -64,6 +66,9 @@ export default function LayerControl() {
   const setSmv = useMapStore((s) => s.setSmv);
   const toggleZonal = useMapStore((s) => s.toggleZonal);
   const setPoiVisible = useMapStore((s) => s.setPoiVisible);
+  const parcel = useMapStore(s => s.parcel);
+  const setParcel = useMapStore(s => s.setParcel);
+  const toggleParcelClass = useMapStore(s => s.toggleParcelClass);
 
   const boundary = useMapStore((s) => s.boundary);
   const setBoundary = useMapStore((s) => s.setBoundary);
@@ -310,7 +315,35 @@ export default function LayerControl() {
               </Stack>
             </Collapse>
 
-            {/* Divider between the SMV section and the Boundary section */}
+            <Group justify="space-between" wrap="nowrap" onClick={() => setParcelOpen(v => !v)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+              <Box onClick={e => e.stopPropagation()} style={{ cursor: 'default' }}>
+                <Switch size="xs" color={NAVY} label="Parcels" styles={{ label: { color: NAVY, fontWeight: 500 } }}
+                  checked={parcel.visible} onChange={e => setParcel({ visible: e.currentTarget.checked })} />
+              </Box>
+              <ActionIcon variant="subtle" color="gray" size="sm" aria-label={parcelOpen ? 'Collapse parcel options' : 'Expand parcel options'}>
+                <IconChevronDown size={14} style={{ transform: parcelOpen ? 'rotate(180deg)' : 'none', transition: 'transform 150ms ease' }} />
+              </ActionIcon>
+            </Group>
+            <Collapse expanded={parcel.visible && parcelOpen}>
+              <Stack gap={6} pl="md">
+                <Text fz={11} c="dimmed">Shown on the Parcels page from zoom 12. Colored by classification.</Text>
+                <Text fz={11} fw={600} c={NAVY}>Parcel Types</Text>
+                {[...PARCEL_CLASSES, { name: 'Other / Unspecified', color: '#94a3b8' }].map((c,i) => {
+                  const key = i === PARCEL_CLASSES.length ? 'other' : c.name.toLowerCase();
+                  return <Checkbox key={key} size="xs" color={c.color} checked={parcel.enabled[key]}
+                    onChange={e => toggleParcelClass(key,e.currentTarget.checked)}
+                    label={<Group gap={6} wrap="nowrap">
+                      <span style={{ width: 10,height: 10,borderRadius: 2,background: c.color,display: 'inline-block' }} />
+                      <Text fz={12} c={NAVY}>{c.name}</Text>
+                    </Group>} />;
+                })}
+                <Text fz={11} c="dimmed" mt={4}>Opacity</Text>
+                <Slider size="xs" color={NAVY} min={0.1} max={1} step={0.05} value={parcel.opacity}
+                  onChange={v => setParcel({ opacity: v })} label={v => `${Math.round(v*100)}%`} />
+              </Stack>
+            </Collapse>
+
+            {/* Divider between data layers and boundaries */}
             <Divider my={4} color={BORDER} />
 
             {/* Boundary row: switch (turns every boundary on/off) + collapse arrow */}

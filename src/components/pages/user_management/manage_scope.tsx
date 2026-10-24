@@ -68,6 +68,7 @@ export default function ManageScope({ user, onClose, onSaved }: Props) {
             poi: s.modules.includes("POI"),
             smv: s.modules.includes("SMV"),
             psa: s.modules.includes("PSA"),
+            parcel: s.modules.includes("Parcel"),
           })),
         }),
       });

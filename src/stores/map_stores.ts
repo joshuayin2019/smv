@@ -23,6 +23,9 @@ type MapState = {
 
     // layer control
     smv: SmvState;
+    parcel: SmvState;
+    setParcel: (patch: Partial<SmvState>) => void;
+    toggleParcelClass: (key: string, on: boolean) => void;
     boundary: BoundaryState;
     poiVisible: boolean;
     setSmv: (patch: Partial<SmvState>) => void;
@@ -36,6 +39,9 @@ export const useMapStore = create<MapState>((set) => ({
     setMap: (map) => set({ map }),
 
     smv: { visible: true, opacity: 1, enabled: { r: true, c: true, i: true, a: true } },
+    parcel: { visible: true, opacity: 1, enabled: { agricultural: true, residential: true, commercial: true, industrial: true, other: true } },
+    setParcel: (patch) => set(s => ({ parcel: { ...s.parcel, ...patch } })),
+    toggleParcelClass: (key, on) => set(s => ({ parcel: { ...s.parcel, enabled: { ...s.parcel.enabled, [key]: on } } })),
     boundary: { visible: true, hoverable: false, type: "region", opacity: 1 }, // default: region, shown, hoverable
     poiVisible: true,
     setSmv: (patch) => set((s) => ({ smv: { ...s.smv, ...patch } })),

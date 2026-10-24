@@ -16,6 +16,10 @@ import PoiLayer from '../pages/poi/map_poi';
 import PoiPanel from '../pages/poi/panel_poi';
 import { PoiHideTab } from '../pages/poi/panel_poi';
 import PoiRadius from '../pages/poi/radius_poi';
+import ParcelLayer from '../pages/parcel/map_parcel';
+import ParcelPanel, { ParcelHideTab } from '../pages/parcel/panel_parcel';
+import ParcelDetailsWindow from '../pages/parcel/parcel_details_window';
+import ParcelSelection from '../pages/parcel/parcel_selection';
 
 
 // SMV
@@ -93,6 +97,8 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
   // Bottom panel content depends on the active page
   const renderPanelContent = (): ReactNode => {
     switch (activePage) {
+      case 'Parcels':
+        return <ParcelPanel onNormal={showNormal} onFull={showFull} onHide={hidePanel} />;
       case 'Point of Interest':
         return (
           <PoiPanel
@@ -188,6 +194,7 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
   useEffect(() => {
     if (
       activePage === 'Point of Interest' ||
+      activePage === 'Parcels' ||
       activePage === 'Schedule of Market Value' ||
       activePage === 'Region' ||
       activePage === 'Province' ||
@@ -229,6 +236,7 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
             {/* POI */}
             <PoiLayer mapPaneRef={mapPaneRef} visible={poiVisible} />
             <PoiRadius />
+            <ParcelLayer />
 
             <PopulationLayer />
             <YearBuiltLayer />
@@ -256,11 +264,14 @@ export default function PanelBottomManagement(props: PanelBottomManagementProps)
           {renderPanelContent()}
         </Splitter.Pane>
       </Splitter>
+      <ParcelDetailsWindow onLocate={showNormal} />
+      <ParcelSelection onShow={showNormal} />
 
       {/* Show the tab only while the panel is hidden */}
       {!isOpen && (
         <>
         {activePage === 'Point of Interest' && <PoiHideTab onShow={showNormal} />}
+        {activePage === 'Parcels' && <ParcelHideTab onShow={showNormal} />}
         {activePage === 'Schedule of Market Value' && <SmvHideTab onShow={showNormal} />}
 
         {activePage === 'Region' && <RegionHideTab onShow={showNormal} />}

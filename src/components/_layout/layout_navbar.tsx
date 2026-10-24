@@ -71,6 +71,7 @@ const SECTIONS: NavSection[] = [
   { label: 'Dashboard', items: [], link: true },
   { label: 'Schedule of Market Value', items: [], link: true },
   { label: 'Point of Interest', items: [], link: true },
+  { label: 'Parcels', items: [], link: true },
   {
     label: 'Demographic Data',
     items: [

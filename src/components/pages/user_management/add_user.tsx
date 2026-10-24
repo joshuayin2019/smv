@@ -19,7 +19,7 @@ import { IconAlertCircle, IconTrash } from "@tabler/icons-react";
 import { user_management_url } from "@/lib/config"; // adjust to your config export
 import { notifications } from "@mantine/notifications";
 
-const MODULES = ["SMV", "POI", "PSA"];
+import { MODULES } from './scope_editor';
 
 const SCOPE_LEVELS = [
   { value: "region", label: "Region" },

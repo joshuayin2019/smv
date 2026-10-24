@@ -6,7 +6,7 @@ import {
 import { IconTrash } from "@tabler/icons-react";
 import { user_management_url } from "@/lib/config";
 
-export const MODULES = ["SMV", "POI", "PSA"];
+export const MODULES = ["SMV", "POI", "PSA", "Parcel"];
 
 const SCOPE_LEVELS = [
   { value: "2", label: "Region" },

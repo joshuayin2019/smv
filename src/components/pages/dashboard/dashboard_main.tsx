@@ -10,7 +10,7 @@ import {
 import { useGlobalStore } from '@/stores/global_stores';
 import { basePath } from '@/lib/config';
 import { BORDER, NAVY, NAVY_DEEP } from '@/lib/theme_colors';
-import { SAMPLE_PARCELS, type DashboardData, type DashboardItem } from '@/lib/pages/dashboard/dashboard_types';
+import { type DashboardData, type DashboardItem } from '@/lib/pages/dashboard/dashboard_types';
 import styles from './dashboard_responsive.module.css';
 
 const full = (n: number) => n.toLocaleString('en-PH');
@@ -41,7 +41,6 @@ function Reveal({ children }: { children: ReactNode }) {
   return <div className={styles.fadeIn} style={{ minWidth: 0 }}>{children}</div>;
 }
 
-const PARCEL_TOTAL = SAMPLE_PARCELS.reduce((sum, item) => sum + item.value, 0);
 const DashboardMap = dynamic(() => import('./dashboard_map'), { ssr: false, loading: () => <Skeleton h={425} radius="md" /> });
 
 /* ---------- shared building blocks ---------- */
@@ -153,7 +152,7 @@ const classIcon = (item: DashboardItem): Icon => /urban/i.test(item.name) ? Icon
 export default function DashboardMain() {
   const auth = useGlobalStore(s => s.auth);
   const setPage = useGlobalStore(s => s.setActivePage);
-  const scopes = JSON.stringify({ smv: auth?.scope_smv ?? [], poi: auth?.scope_poi ?? [], psa: auth?.scope_psa ?? [] });
+  const scopes = JSON.stringify({ smv: auth?.scope_smv ?? [], poi: auth?.scope_poi ?? [], psa: auth?.scope_psa ?? [], parcel: auth?.scope_parcel ?? [] });
   const [response, setResponse] = useState<{ key: string; data: DashboardData } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -187,13 +186,13 @@ export default function DashboardMain() {
   const marketLow = marketSorted[marketSorted.length - 1];
 
   const link = (page: string) => <Button size="compact-xs" variant="subtle" color={NAVY} rightSection={<IconArrowUpRight size={13} />} onClick={() => setPage(page)}>Explore</Button>;
-  const metric = (value: number | undefined, sample = false) => loading && !data && !sample ? <Skeleton h={34} w={110} my={4} /> : <Text fz={32} fw={800} lh={1.4} c={NAVY_DEEP} style={{ fontVariantNumeric: 'tabular-nums' }}>{value === undefined ? '—' : <CountUp value={value} />}</Text>;
+  const metric = (value: number | undefined) => loading && !data ? <Skeleton h={34} w={110} my={4} /> : <Text fz={32} fw={800} lh={1.4} c={NAVY_DEEP} style={{ fontVariantNumeric: 'tabular-nums' }}>{value === undefined ? '—' : <CountUp value={value} />}</Text>;
   const unavailable = <Text size="sm" c="dimmed">Data unavailable. Refresh to retry.</Text>;
   const cards = [
     { title: 'Market value records', value: data?.market?.roads, note: 'Road records in the SMV inventory', icon: IconRoute, color: '#2458bd', page: 'Schedule of Market Value' },
     { title: 'Points of interest', value: data?.poi?.total, note: 'Mapped places in your POI scope', icon: IconMapPin, color: '#0b927c', page: 'Point of Interest' },
     { title: 'Population', value: demographic?.population, note: 'People · PSA 2020', icon: IconUsers, color: '#8a53c4', page: 'Population' },
-    { title: 'Parcels', value: PARCEL_TOTAL, note: 'Illustrative inventory · not connected', icon: IconBuildingCommunity, color: '#ce8515', sample: true },
+    { title: 'Parcels', value: data?.parcel?.total, note: 'Parcel records in your assigned scope', icon: IconBuildingCommunity, color: '#ce8515' },
   ];
 
   return <Box className={styles.viewport} h="100%" style={{ overflowY: 'auto', background: '#f4f6fb', borderRadius: 12 }}>
@@ -215,8 +214,8 @@ export default function DashboardMain() {
       <SimpleGrid spacing="md" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))' }}>
         {cards.map((card, i) => <Paper key={card.title} className={`${styles.kpi} ${styles.lift} ${styles.reveal}`} withBorder radius="lg" p="lg" style={{ ...vars({ '--i': i + 1, '--accent': card.color }), borderColor: BORDER }}>
           <Group justify="space-between" mb="xs"><ThemeIcon size={36} radius="md" variant="light" color={card.color}><card.icon size={20} stroke={1.6} /></ThemeIcon>
-            {card.sample ? <Badge size="xs" color="orange" variant="light">Sample data</Badge> : <Badge size="xs" color="gray" variant="light">Database</Badge>}</Group>
-          <Text size="xs" fw={600} c="#61708c">{card.title}</Text>{metric(card.value, card.sample)}
+            <Badge size="xs" color="gray" variant="light">Database</Badge></Group>
+          <Text size="xs" fw={600} c="#61708c">{card.title}</Text>{metric(card.value)}
           <Group justify="space-between" align="center" gap={4}><Text fz={10} c="dimmed">{card.note}</Text>{card.page && <Button size="compact-xs" variant="subtle" px={3} aria-label={`Open ${card.title}`} onClick={() => setPage(card.page!)}><IconArrowUpRight size={16} /></Button>}</Group>
         </Paper>)}
       </SimpleGrid>
@@ -308,9 +307,9 @@ export default function DashboardMain() {
         </Card>
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 7 }}>
-        <Card lazy eyebrow="Land inventory" title="Parcels by classification" icon={IconBuildingCommunity} iconColor="#ce8515" action={<Badge color="orange" variant="light" size="sm">Sample data</Badge>}>
-          <Distribution data={SAMPLE_PARCELS} totalLabel="sample parcels" />
-          <Text fz={11} c="#8c6c2c" mt="lg" pt="md" style={{ borderTop: '1px dashed #e8d9b8' }}>Illustrative figures only. Parcel records are not connected yet; these numbers do not reflect your geographic scope.</Text>
+        <Card lazy eyebrow="Land inventory" title="Parcels by classification" icon={IconBuildingCommunity} iconColor="#ce8515" action={link('Parcels')}>
+          {data?.parcel ? <Reveal><Distribution data={data.parcel.classifications} totalLabel="parcels" /></Reveal> : loading ? <Skeleton h={250} /> : unavailable}
+          <Text fz={11} c="#8c6c2c" mt="lg" pt="md" style={{ borderTop: '1px dashed #e8d9b8' }}>Counts follow your assigned parcel scope.{data?.parcel?.synthetic ? ` Includes ${full(data.parcel.synthetic)} synthetic test parcels.` : ''}</Text>
         </Card>
         </Grid.Col>
       </Grid>
@@ -354,12 +353,12 @@ export default function DashboardMain() {
               const I = Ico as Icon;
               return <Button key={page as string} variant="light" color={NAVY} justify="space-between" leftSection={<I size={16} />} rightSection={<IconArrowUpRight size={15} />} onClick={() => setPage(page as string)}>{page as string}</Button>;
             })}
-            <Text fz={10} c="dimmed" mt="xs">PSA figures use the 2020 census. Parcel figures are sample data.</Text>
+            <Text fz={10} c="dimmed" mt="xs">PSA figures use the 2020 census. Parcel counts come from your database.</Text>
           </Stack>
         </Card>
         </Grid.Col>
       </Grid>
-      <Text ta="center" fz={10} c="dimmed" pb="sm">Database summaries are cached for up to one minute. Parcel figures are illustrative.</Text>
+      <Text ta="center" fz={10} c="dimmed" pb="sm">Database summaries are cached for up to one minute.</Text>
     </Stack>
   </Box>;
 }

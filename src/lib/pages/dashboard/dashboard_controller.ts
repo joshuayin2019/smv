@@ -52,6 +52,29 @@ async function poi(scopes: DashboardScopes['poi']): Promise<NonNullable<Dashboar
   return { total: number(row.total), categories: (row.categories ?? []).map((r: DashboardItem) => ({ name: r.name, value: number(r.value), categoryId: r.categoryId })), areas: items(row.areas ?? []) };
 }
 
+async function parcel(scopes: DashboardScopes['parcel']): Promise<NonNullable<DashboardData['parcel']>> {
+  const scope = buildScopeFilter(scopes, 1);
+  const classifications = VALUES.map(v => ({ name: v.name, value: 0, color: v.color }));
+  if (!scope) return { total: 0, synthetic: 0, classifications };
+  const { rows } = await conn.query(`SELECT
+      COALESCE(NULLIF(lower(btrim(b.classification)), ''), 'unspecified') AS classification,
+      COUNT(*) AS value,
+      COUNT(*) FILTER (WHERE b.source IN ('synthetic-ncr-parcels-v1', 'synthetic-ncr-parcels-v2', 'synthetic-ncr-parcels-v3')) AS synthetic
+    FROM data.parcel b WHERE TRUE${scope.sql}
+    GROUP BY 1 ORDER BY 1`, scope.params);
+  let total = 0, synthetic = 0;
+  for (const row of rows) {
+    const value = number(row.value);
+    total += value;
+    synthetic += number(row.synthetic);
+    const known = classifications.find(c => c.name.toLowerCase() === row.classification);
+    if (known) known.value += value;
+    else classifications.push({ name: row.classification === 'unspecified' ? 'Unspecified' : row.classification,
+      value, color: '#94a3b8' });
+  }
+  return { total, synthetic, classifications };
+}
+
 async function demographic(scopes: DashboardScopes['psa']): Promise<NonNullable<DashboardData['demographic']>> {
   const scope = buildScopeFilter(scopes, 1);
   if (!scope) return { population: 0, male: 0, female: 0, barangays: 0, municipalities: 0, classes: [], buildings: [], years: [], floors: [] };
@@ -84,14 +107,15 @@ export async function loadDashboard(scopes: DashboardScopes): Promise<DashboardD
   if (hit && Date.now() - hit.at < 60_000) return hit.data;
   if (pending.has(key)) return pending.get(key)!;
   const job = (async () => {
-    const results = await Promise.allSettled([market(scopes.smv), poi(scopes.poi), demographic(scopes.psa)]);
+    const results = await Promise.allSettled([market(scopes.smv), poi(scopes.poi), demographic(scopes.psa), parcel(scopes.parcel)]);
     const errors: string[] = [];
-    const names = ['Market values', 'Points of interest', 'Demographics'];
+    const names = ['Market values', 'Points of interest', 'Demographics', 'Parcels'];
     results.forEach((result, i) => { if (result.status === 'rejected') { errors.push(`${names[i]} could not be loaded`); console.warn('Dashboard:', names[i], result.reason); } });
     const data: DashboardData = { generatedAt: new Date().toISOString(),
       market: results[0].status === 'fulfilled' ? results[0].value : null,
       poi: results[1].status === 'fulfilled' ? results[1].value : null,
-      demographic: results[2].status === 'fulfilled' ? results[2].value : null, errors,
+      demographic: results[2].status === 'fulfilled' ? results[2].value : null,
+      parcel: results[3].status === 'fulfilled' ? results[3].value : null, errors,
     };
     if (!errors.length) {
       cache.set(key, { at: Date.now(), data });

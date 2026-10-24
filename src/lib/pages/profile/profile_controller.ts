@@ -12,14 +12,14 @@ export async function loadProfile(auth: Auth): Promise<ProfileData | null> {
       user: { user_id: 0, username: auth.username, email: auth.email, full_name: auth.fullname,
         phone_number: null, address: null, role: auth.role, status: 'active', created_at: null, updated_at: null },
       scopes: [{ scope_id: 0, scope_level: 1, reg_code: null, pro_code: null, mun_code: null,
-        bgy_code: null, poi: true, smv: true, psa: true }],
+        bgy_code: null, poi: true, smv: true, psa: true, parcel: true }],
       managedExternally: true,
     };
   }
   const user = await conn.query<ProfileUser>(`SELECT ${USER_COLUMNS} FROM data.users WHERE user_id = $1`, [auth.user_id]);
   if (!user.rows[0]) return null;
   const scopes = await conn.query<ProfileScope>(
-    `SELECT scope_id, scope_level, reg_code, pro_code, mun_code, bgy_code, poi, smv, psa
+    `SELECT scope_id, scope_level, reg_code, pro_code, mun_code, bgy_code, poi, smv, psa, parcel
        FROM data.scope WHERE user_id = $1 ORDER BY scope_level, reg_code, pro_code, mun_code, bgy_code, scope_id`,
     [auth.user_id],
   );

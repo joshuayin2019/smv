@@ -21,6 +21,7 @@
 /build
 
 # misc
+/_database_backup/
 .DS_Store
 *.pem
 
